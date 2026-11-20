@@ -13,29 +13,6 @@ static wchar_t VkToChar(WPARAM vk, LPARAM lParam) {
   return (n == 1) ? buf[0] : 0;
 }
 
-// 判断 GetTextExt 返回的矩形是否是一个可用于定位的真实光标位置
-static bool IsUsableCaretExtent(const RECT& rc) {
-  // 1. 矩形不能全为零 (最典型的无效情况)
-  if (rc.left == 0 && rc.top == 0 && rc.right == 0 && rc.bottom == 0)
-    return false;
-
-  // 2. 宽度和高度至少有一个不能为零 (光标通常至少有一个维度大于0)
-  //    注意：在折叠选区时，宽度可能为0，但高度不应为0。
-  //    一个更严格的检查是要求宽度和高度都大于0，但这可能会在
-  //    某些零宽字符场景下误判。对于输入法定位，我们至少需要
-  //    有一个维度是有效的。
-  if (rc.right <= rc.left && rc.bottom <= rc.top)
-    return false;  // 宽高都无效，彻底不可用
-
-  // 3. (可选) 检查坐标是否在屏幕范围内，避免窗口跑到屏幕外
-  //    GetTextExt 返回的是屏幕坐标，可以用 MonitorFromRect 验证
-  HMONITOR hMon = MonitorFromRect(&rc, MONITOR_DEFAULTTONULL);
-  if (hMon == nullptr)
-    return false;  // 坐标不在任何显示器上，不可用
-
-  return true;
-}
-
 CJiDaTextService::CJiDaTextService() = default;
 CJiDaTextService::~CJiDaTextService() {
   if (_activeCtx) {
@@ -485,6 +462,7 @@ void CJiDaTextService::_SyncComposition(ITfContext* pic) {
 void CJiDaTextService::_ShowCandidates(ITfContext* pic) {
   if (!_candWnd)
     return;
+
   if (_engine.Buffer().empty()) {
     _candWnd->Hide();
     return;
@@ -492,63 +470,42 @@ void CJiDaTextService::_ShowCandidates(ITfContext* pic) {
 
   _candWnd->SetTitle(_engine.Buffer());
 
-  RECT rcCaret = {0, 0, 0, 0};
-  bool bPositioned = false;  // 标记是否成功获得了有效的光标位置
+  RECT rcCaret = {};
+  bool bPositioned = false;
 
-  ITfContextView* view = nullptr;
-  if (SUCCEEDED(pic->GetActiveView(&view)) && view) {
-    ITfRange* range = nullptr;
-    TF_SELECTION sel;
-    ULONG n = 0;
-    // 获取当前选择范围（光标位置）
-    if (SUCCEEDED(pic->GetSelection(TF_INVALID_EDIT_COOKIE,
-                                    TF_DEFAULT_SELECTION, 1, &sel, &n)) &&
-        n) {
-      range = sel.range;
+  // 创建 Edit Session
+  auto* session = new CCaretPositionEditSession(pic);
+  if (session) {
+    HRESULT hrSession = E_FAIL;
+
+    // 请求同步只读 Edit Session
+    HRESULT hr = pic->RequestEditSession(_clientId, session,
+                                         TF_ES_READ | TF_ES_SYNC, &hrSession);
+
+    if (SUCCEEDED(hr) && SUCCEEDED(hrSession)) {
+      bPositioned = session->GetPosition(&rcCaret);
     }
 
-    if (range) {
-      RECT r = {0, 0, 0, 0};
-      BOOL clipped = FALSE;
-      HRESULT hrExt =
-          view->GetTextExt(TF_INVALID_EDIT_COOKIE, range, &r, &clipped);
-
-      // 核心判断：只有返回成功 且 矩形可用 时，才认为定位有效
-      if (SUCCEEDED(hrExt) && IsUsableCaretExtent(r)) {
-        rcCaret = r;
-        bPositioned = true;
-      } else {
-        // 可以在这里加日志，方便调试是哪个宿主/场景导致失效
-        // OutputDebugStringW(L"[JiDa] GetTextExt returned invalid rect or
-        // failed. Falling back.\n");
-      }
-      range->Release();
-    }
-    view->Release();
+    session->Release();
   }
 
-  // --- 兜底定位策略 ---
+  // 获取失败时才使用兜底位置
   if (!bPositioned) {
-    // 策略 A (推荐): 使用宿主窗口的客户区左上角作为后备位置
-    // 这需要你能拿到宿主窗口的 HWND。在 TSF 中可以通过 ITfContextView::GetWnd
-    // 获取。
     HWND hwndHost = nullptr;
-    if (SUCCEEDED(pic->GetActiveView(&view)) && view) {  // 重新获取 view
+    ITfContextView* view = nullptr;
+
+    if (SUCCEEDED(pic->GetActiveView(&view)) && view) {
       view->GetWnd(&hwndHost);
       view->Release();
     }
 
-    if (hwndHost != nullptr) {
-      POINT pt = {0, 0};
-      ClientToScreen(hwndHost, &pt);  // 转换为屏幕坐标
-      rcCaret.left = pt.x;
-      rcCaret.top = pt.y;
-      rcCaret.right = pt.x + 1;  // 给一个 1x1 的小区域
-      rcCaret.bottom = pt.y + 1;
+    if (hwndHost) {
+      POINT pt = {};
+      ClientToScreen(hwndHost, &pt);
+
+      rcCaret = {pt.x, pt.y, pt.x + 1, pt.y + 1};
     } else {
-      // 策略 B (终极兜底): 放在屏幕工作区的左上角稍靠内，避免完全贴边
       SystemParametersInfo(SPI_GETWORKAREA, 0, &rcCaret, 0);
-      // 在左上角基础上偏移一点，避免和系统 UI 重叠
       rcCaret.left += 20;
       rcCaret.top += 20;
       rcCaret.right = rcCaret.left + 1;
