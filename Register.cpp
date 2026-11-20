@@ -124,7 +124,7 @@ STDAPI DllRegisterServer() {
   if (!GetModuleFileNameW(g_hInstance, dllPath, MAX_PATH))
     return HRESULT_FROM_WIN32(GetLastError());
 
-  hr = RegisterComServer(CLSID_JidaTSF, dllPath);
+  hr = RegisterComServer(CLSID_JiDaTSF, dllPath);
   if (FAILED(hr))
     return hr;
 
@@ -137,9 +137,9 @@ STDAPI DllRegisterServer() {
                         (void**)&pProfileMgr);
   if (SUCCEEDED(hr) && pProfileMgr) {
     hr = pProfileMgr->RegisterProfile(
-        CLSID_JidaTSF,                  // rclsid
+        CLSID_JiDaTSF,                  // rclsid
         kLangId,                          // langid
-        GUID_LBI,                         // guidProfile
+        GUID_JiDa_LBI,                    // guidProfile
         kDesc, (ULONG)wcslen(kDesc),      // 描述字符串
         dllPath, (ULONG)wcslen(dllPath),  // 图标文件
         0,                                // uIconIndex
@@ -157,14 +157,14 @@ STDAPI DllRegisterServer() {
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
                                    CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                    (void**)&pCategoryMgr))) {
-      pCategoryMgr->RegisterCategory(CLSID_JidaTSF, GUID_TFCAT_TIP_KEYBOARD,
-                                     CLSID_JidaTSF);
+      pCategoryMgr->RegisterCategory(CLSID_JiDaTSF, GUID_TFCAT_TIP_KEYBOARD,
+                                     CLSID_JiDaTSF);
       pCategoryMgr->RegisterCategory(
-          CLSID_JidaTSF, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_JidaTSF);
+          CLSID_JiDaTSF, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_JiDaTSF);
       pCategoryMgr->RegisterCategory(
-          CLSID_JidaTSF, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_JidaTSF);
+          CLSID_JiDaTSF, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_JiDaTSF);
       pCategoryMgr->RegisterCategory(
-          CLSID_JidaTSF, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_JidaTSF);
+          CLSID_JiDaTSF, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_JiDaTSF);
       pCategoryMgr->Release();
     }
   }
@@ -199,7 +199,7 @@ STDAPI DllUnregisterServer() {
   if (SUCCEEDED(CoCreateInstance(
           CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
           IID_ITfInputProcessorProfileMgr, (void**)&pProfileMgr))) {
-    pProfileMgr->UnregisterProfile(CLSID_JidaTSF, kLangId, GUID_LBI, 0);
+    pProfileMgr->UnregisterProfile(CLSID_JiDaTSF, kLangId, GUID_JiDa_LBI, 0);
     pProfileMgr->Release();
   }
 
@@ -207,19 +207,19 @@ STDAPI DllUnregisterServer() {
   if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
                                  CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                  (void**)&pCategoryMgr))) {
-    pCategoryMgr->UnregisterCategory(CLSID_JidaTSF, GUID_TFCAT_TIP_KEYBOARD,
-                                     CLSID_JidaTSF);
+    pCategoryMgr->UnregisterCategory(CLSID_JiDaTSF, GUID_TFCAT_TIP_KEYBOARD,
+                                     CLSID_JiDaTSF);
     pCategoryMgr->UnregisterCategory(
-        CLSID_JidaTSF, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_JidaTSF);
+        CLSID_JiDaTSF, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_JiDaTSF);
     pCategoryMgr->UnregisterCategory(
-        CLSID_JidaTSF, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_JidaTSF);
+        CLSID_JiDaTSF, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_JiDaTSF);
     pCategoryMgr->UnregisterCategory(
-        CLSID_JidaTSF, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_JidaTSF);
+        CLSID_JiDaTSF, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_JiDaTSF);
     pCategoryMgr->Release();
   }
 
   wchar_t clsidStr[64] = {0};
-  if (StringFromGUID2(CLSID_JidaTSF, clsidStr, 64)) {
+  if (StringFromGUID2(CLSID_JiDaTSF, clsidStr, 64)) {
     std::wstring sub = std::wstring(L"Software\\Classes\\CLSID\\") + clsidStr;
     RegDeleteTreeW(HKEY_LOCAL_MACHINE, sub.c_str());
   }

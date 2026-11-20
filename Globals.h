@@ -8,8 +8,8 @@
 #include <vector>
 
 extern HINSTANCE g_hInstance;
-extern const CLSID CLSID_JidaTSF;
-extern const GUID GUID_LBI;
+extern const CLSID CLSID_JiDaTSF;
+extern const GUID GUID_JiDa_LBI;
 
 struct WubiEntry {
   std::wstring code;
@@ -25,7 +25,9 @@ struct TrieNode {
   TrieNode() { memset(children, -1, sizeof(children)); }
 };
 
-struct JidianConfig {
+enum class CandLayout { Vertical, Horizontal };
+
+struct JiDaConfig {
   bool autoCommitUnique = true;
   bool zRepeat = true;
   bool zWildcard = true;
@@ -34,6 +36,7 @@ struct JidianConfig {
   bool perKeyHint = true;
   bool gbkExt = true;
   bool inlinePreedit = false;
+  CandLayout candLayout = CandLayout::Horizontal;
   wchar_t wildcardChar = L'z';
 };
 
@@ -42,6 +45,6 @@ extern std::vector<TrieNode> g_trie;
 extern int g_trieRoot;
 
 extern std::vector<std::pair<wchar_t, std::wstring>> g_punctMap;
-extern JidianConfig g_config;
+extern JiDaConfig g_config;
 
-bool LoadJidaTable(const std::wstring& path);
+bool LoadJiDaTable(const std::wstring& path);

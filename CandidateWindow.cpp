@@ -3,7 +3,11 @@
 #include <algorithm>
 #include "DpiHelper.h"
 
-static const wchar_t* kCandClass = L"JidianCandWndV2";
+static const wchar_t* kCandClass = L"JiDaCandWnd";
+
+static bool IsVertical() {
+  return g_config.candLayout == CandLayout::Vertical;
+}
 
 bool CCandidateWindow::Create(HINSTANCE h) {
   WNDCLASSEX wc = {sizeof(wc)};
@@ -39,30 +43,37 @@ void CCandidateWindow::Hide() {
     ShowWindow(_hwnd, SW_HIDE);
 }
 
-void CCandidateWindow::PageUp() {
-  _pageStart = (_pageStart >= kPageSize) ? _pageStart - kPageSize : 0;
-  _selected = 0;
-}
-
-void CCandidateWindow::PageDown() {
-  if (_pageStart + kPageSize <= (int)_items.size())
-    _pageStart += kPageSize;
-  _selected = 0;
+void CCandidateWindow::_RebuildFont() {
+  if (_font)
+    DeleteObject(_font);
+  _font = CreateFontW(-MulDiv(14, _dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
+                      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                      CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                      L"Microsoft YaHei");
+  _rowHeight = MulDiv(28, _dpi, 96);
+  _padding = MulDiv(8, _dpi, 96);
+  // _cellWidth 由 _UpdateSize 根据当前页内容动态计算
 }
 
 void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
+                            int selected,
                             RECT rc,
                             UINT dpi) {
-  // 无候选且无标题才隐藏；否则即使无候选也显示窗口（只画标题）
   if (items.empty() && _title.empty()) {
     Hide();
     return;
   }
+
   _items = items;
-  if (_selected >= (int)_items.size())
-    _selected = 0;
-  if (_pageStart >= (int)_items.size())
-    _pageStart = 0;
+  if (selected < 0)
+    selected = 0;
+  if (selected >= (int)_items.size() && !_items.empty())
+    selected = (int)_items.size() - 1;
+  _selected = selected;
+
+  // 页起点按选中项自动调整
+  _pageStart = (_selected / kPageSize) * kPageSize;
+
   if (dpi != _dpi) {
     _dpi = dpi;
     _RebuildFont();
@@ -83,37 +94,62 @@ void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
     x = mi.rcWork.right - w;
   if (x < mi.rcWork.left)
     x = mi.rcWork.left;
-  SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h,
-               SWP_NOACTIVATE | SWP_SHOWWINDOW);
-  InvalidateRect(_hwnd, nullptr, TRUE);
-}
+  if (y < mi.rcWork.top)
+    y = mi.rcWork.top;
 
-void CCandidateWindow::_RebuildFont() {
-  if (_font)
-    DeleteObject(_font);
-  _font = CreateFontW(-MulDiv(14, _dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                      CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                      L"Microsoft YaHei");
-  _rowHeight = MulDiv(28, _dpi, 96);
-  _padding = MulDiv(8, _dpi, 96);
+  bool needRepos = (x != _lastX || y != _lastY || w != _lastW || h != _lastH);
+  if (needRepos) {
+    SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    _lastX = x;
+    _lastY = y;
+    _lastW = w;
+    _lastH = h;
+  } else if (!IsWindowVisible(_hwnd)) {
+    ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+  }
+  InvalidateRect(_hwnd, nullptr, FALSE);
 }
 
 void CCandidateWindow::_UpdateSize() {
-  int maxChars = (int)_title.size() + 2;
-  int end = (std::min)((int)_items.size(), _pageStart + kPageSize);
-  for (int i = _pageStart; i < end; ++i) {
-    maxChars = (std::max)(maxChars, (int)_items[i].text.size() + 3);
+  int titleH = _title.empty() ? 0 : (_rowHeight + MulDiv(6, _dpi, 96));
+  int pageEnd = (std::min)(_pageStart + kPageSize, (int)_items.size());
+  int visible = pageEnd - _pageStart;
+  if (visible < 0)
+    visible = 0;
+
+  int w, h;
+  if (IsVertical()) {
+    int maxChars = (int)_title.size() + 2;
+    for (int i = _pageStart; i < pageEnd; ++i)
+      maxChars = (std::max)(maxChars, (int)_items[i].text.size() + 3);
+    w = MulDiv(maxChars * 18, _dpi, 96) + _padding * 2;
+    if (visible < 1)
+      visible = 1;
+    h = titleH + _rowHeight * visible + _padding * 2;
+  } else {
+    // 横向：按当前页最长候选动态计算每格宽度，与实际绘制保持一致
+    int n = (visible < 1) ? 1 : visible;
+
+    int maxCellChars = 3;  // 至少容纳 "N.字"
+    for (int i = _pageStart; i < pageEnd; ++i) {
+      int len = (int)_items[i].text.size() + 2;  // "N." 前缀
+      maxCellChars = (std::max)(maxCellChars, len);
+    }
+    // 18px/字符估算，下限 60px 避免单字时格子过窄
+    _cellWidth =
+        (std::max)(MulDiv(maxCellChars * 18, _dpi, 96), MulDiv(60, _dpi, 96));
+
+    int gridWidth = _cellWidth * n;
+    int titleWidth =
+        _title.empty() ? 0 : MulDiv(((int)_title.size() + 2) * 18, _dpi, 96);
+
+    // 窗口宽度 = max(格子总宽, 标题宽) + 左右内边距
+    w = (std::max)(gridWidth, titleWidth) + _padding * 2;
+    h = titleH + _rowHeight + _padding * 2;
   }
-  _maxWidth = MulDiv(maxChars * 18, _dpi, 96) + _padding * 2;
 
-  int vis = end - _pageStart;
-  if (vis < 1)
-    vis = 1;
-  int titleHeight = _title.empty() ? 0 : (_rowHeight + MulDiv(6, _dpi, 96));
-  int h = titleHeight + _rowHeight * vis + _padding * 2;
-
-  SetWindowPos(_hwnd, nullptr, 0, 0, _maxWidth, h,
+  SetWindowPos(_hwnd, nullptr, 0, 0, w, h,
                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
@@ -151,6 +187,7 @@ LRESULT CCandidateWindow::_OnPaint() {
   HDC hdc = BeginPaint(_hwnd, &ps);
   RECT rc;
   GetClientRect(_hwnd, &rc);
+
   HDC mem = CreateCompatibleDC(hdc);
   HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
   HGDIOBJ oldB = SelectObject(mem, bmp);
@@ -160,7 +197,6 @@ LRESULT CCandidateWindow::_OnPaint() {
 
   int y = _padding;
 
-  // 标题（当前编码）
   if (!_title.empty()) {
     RECT titleRc = {_padding, y, rc.right - _padding, y + _rowHeight};
     SetTextColor(mem, RGB(0, 100, 200));
@@ -177,30 +213,42 @@ LRESULT CCandidateWindow::_OnPaint() {
     y += MulDiv(4, _dpi, 96);
   }
 
-  // 候选行（可能为空）
-  int end = (std::min)((int)_items.size(), _pageStart + kPageSize);
-  if (_items.empty() && !_title.empty()) {
-    // 无候选：提示文字
+  int pageEnd = (std::min)(_pageStart + kPageSize, (int)_items.size());
+  if (_items.empty()) {
     RECT hintRc = {_padding, y, rc.right - _padding, y + _rowHeight};
     SetTextColor(mem, RGB(160, 160, 160));
     const wchar_t* hint = L"（无候选）";
     DrawTextW(mem, hint, (int)wcslen(hint), &hintRc,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    y += _rowHeight;
-  } else {
-    for (int i = _pageStart; i < end; ++i) {
+  } else if (IsVertical()) {
+    for (int i = _pageStart; i < pageEnd; ++i) {
       int local = i - _pageStart;
       std::wstring line = std::to_wstring(local + 1) + L". " + _items[i].text;
       RECT row = {_padding, y, rc.right - _padding, y + _rowHeight};
-      if (local == _selected) {
+      if (i == _selected) {
         FillRect(mem, &row, (HBRUSH)(COLOR_HIGHLIGHT + 1));
         SetTextColor(mem, GetSysColor(COLOR_HIGHLIGHTTEXT));
-      } else {
+      } else
         SetTextColor(mem, GetSysColor(COLOR_WINDOWTEXT));
-      }
       DrawTextW(mem, line.c_str(), (int)line.size(), &row,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
       y += _rowHeight;
+    }
+  } else {
+    // 横向：每格 _cellWidth 宽
+    int x = _padding;
+    for (int i = _pageStart; i < pageEnd; ++i) {
+      int local = i - _pageStart;
+      std::wstring line = std::to_wstring(local + 1) + L"." + _items[i].text;
+      RECT cell = {x, y, x + _cellWidth, y + _rowHeight};
+      if (i == _selected) {
+        FillRect(mem, &cell, (HBRUSH)(COLOR_HIGHLIGHT + 1));
+        SetTextColor(mem, GetSysColor(COLOR_HIGHLIGHTTEXT));
+      } else
+        SetTextColor(mem, GetSysColor(COLOR_WINDOWTEXT));
+      DrawTextW(mem, line.c_str(), (int)line.size(), &cell,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+      x += _cellWidth;
     }
   }
 
@@ -213,40 +261,57 @@ LRESULT CCandidateWindow::_OnPaint() {
   return 0;
 }
 
+int CCandidateWindow::_HitTest(int mx, int my) const {
+  int titleH = _title.empty() ? 0 : (_rowHeight + MulDiv(6, _dpi, 96));
+  int pageEnd = (std::min)(_pageStart + kPageSize, (int)_items.size());
+  if (IsVertical()) {
+    int base = _padding + titleH;
+    int row = (my - base) / _rowHeight;
+    if (row < 0 || row >= pageEnd - _pageStart)
+      return -1;
+    return _pageStart + row;
+  } else {
+    int y0 = _padding + titleH;
+    if (my < y0 || my >= y0 + _rowHeight)
+      return -1;
+    int col = (mx - _padding) / _cellWidth;
+    if (col < 0 || col >= pageEnd - _pageStart)
+      return -1;
+    return _pageStart + col;
+  }
+}
+
 LRESULT CCandidateWindow::_OnLButtonUp(LPARAM l) {
-  POINT pt = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
-  int yStart =
-      _padding + (_title.empty() ? 0 : (_rowHeight + MulDiv(4, _dpi, 96)));
-  int row = (pt.y - yStart) / _rowHeight;
-  int idx = _pageStart + row;
-  if (row >= 0 && idx >= 0 && idx < (int)_items.size()) {
-    _selected = row;
+  int idx = _HitTest(GET_X_LPARAM(l), GET_Y_LPARAM(l));
+  if (idx >= 0) {
+    _selected = idx;
     InvalidateRect(_hwnd, nullptr, TRUE);
     if (OnPick)
-      OnPick(_items[idx].text);
+      OnPick(idx);
   }
   return 0;
 }
 
 LRESULT CCandidateWindow::_OnMouseMove(LPARAM l) {
-  POINT pt = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
-  int yStart =
-      _padding + (_title.empty() ? 0 : (_rowHeight + MulDiv(4, _dpi, 96)));
-  int row = (pt.y - yStart) / _rowHeight;
-  if (row >= 0 && row < kPageSize && _pageStart + row < (int)_items.size()) {
-    if (_selected != row) {
-      _selected = row;
-      InvalidateRect(_hwnd, nullptr, TRUE);
-    }
+  int idx = _HitTest(GET_X_LPARAM(l), GET_Y_LPARAM(l));
+  if (idx != _hover) {
+    _hover = idx;
+    InvalidateRect(_hwnd, nullptr, TRUE);
   }
   return 0;
 }
 
 LRESULT CCandidateWindow::_OnMouseWheel(WPARAM w) {
-  if (GET_WHEEL_DELTA_WPARAM(w) > 0)
-    PageUp();
-  else
-    PageDown();
+  if (GET_WHEEL_DELTA_WPARAM(w) > 0) {
+    if (_pageStart >= kPageSize)
+      _pageStart -= kPageSize;
+    else
+      _pageStart = 0;
+  } else {
+    if (_pageStart + kPageSize < (int)_items.size())
+      _pageStart += kPageSize;
+  }
+  _selected = _pageStart;
   InvalidateRect(_hwnd, nullptr, TRUE);
   return 0;
 }

@@ -1,4 +1,4 @@
-#include "JidaTextService.h"
+#include "JiDaTextService.h"
 #include <ctfutb.h>
 #include <cwctype>
 #include "DpiHelper.h"
@@ -10,20 +10,41 @@ static wchar_t VkToChar(WPARAM vk, LPARAM lParam) {
     return 0;
   wchar_t buf[4] = {0};
   int n = ToUnicode((UINT)vk, (UINT)((lParam >> 16) & 0xFF), ks, buf, 2, 0);
-  if (n == 1)
-    return buf[0];
-  return 0;
+  return (n == 1) ? buf[0] : 0;
 }
 
-CJidaTextService::CJidaTextService() = default;
-CJidaTextService::~CJidaTextService() {
+// 判断 GetTextExt 返回的矩形是否是一个可用于定位的真实光标位置
+static bool IsUsableCaretExtent(const RECT& rc) {
+  // 1. 矩形不能全为零 (最典型的无效情况)
+  if (rc.left == 0 && rc.top == 0 && rc.right == 0 && rc.bottom == 0)
+    return false;
+
+  // 2. 宽度和高度至少有一个不能为零 (光标通常至少有一个维度大于0)
+  //    注意：在折叠选区时，宽度可能为0，但高度不应为0。
+  //    一个更严格的检查是要求宽度和高度都大于0，但这可能会在
+  //    某些零宽字符场景下误判。对于输入法定位，我们至少需要
+  //    有一个维度是有效的。
+  if (rc.right <= rc.left && rc.bottom <= rc.top)
+    return false;  // 宽高都无效，彻底不可用
+
+  // 3. (可选) 检查坐标是否在屏幕范围内，避免窗口跑到屏幕外
+  //    GetTextExt 返回的是屏幕坐标，可以用 MonitorFromRect 验证
+  HMONITOR hMon = MonitorFromRect(&rc, MONITOR_DEFAULTTONULL);
+  if (hMon == nullptr)
+    return false;  // 坐标不在任何显示器上，不可用
+
+  return true;
+}
+
+CJiDaTextService::CJiDaTextService() = default;
+CJiDaTextService::~CJiDaTextService() {
   if (_activeCtx) {
     _activeCtx->Release();
     _activeCtx = nullptr;
   }
 }
 
-STDMETHODIMP CJidaTextService::QueryInterface(REFIID riid, void** ppv) {
+STDMETHODIMP CJiDaTextService::QueryInterface(REFIID riid, void** ppv) {
   if (!ppv)
     return E_INVALIDARG;
   *ppv = nullptr;
@@ -38,17 +59,17 @@ STDMETHODIMP CJidaTextService::QueryInterface(REFIID riid, void** ppv) {
   AddRef();
   return S_OK;
 }
-STDMETHODIMP_(ULONG) CJidaTextService::AddRef() {
+STDMETHODIMP_(ULONG) CJiDaTextService::AddRef() {
   return InterlockedIncrement(&_ref);
 }
-STDMETHODIMP_(ULONG) CJidaTextService::Release() {
+STDMETHODIMP_(ULONG) CJiDaTextService::Release() {
   ULONG u = InterlockedDecrement(&_ref);
   if (!u)
     delete this;
   return u;
 }
 
-STDMETHODIMP CJidaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
+STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
   _threadMgr = ptim;
   _threadMgr->AddRef();
   _clientId = tid;
@@ -67,18 +88,24 @@ STDMETHODIMP CJidaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
                        static_cast<ITfThreadMgrEventSink*>(this), &_sinkCookie);
     source->Release();
   }
+
   _candWnd = std::make_unique<CCandidateWindow>();
   _candWnd->Create(g_hInstance);
-  _candWnd->OnPick = [this](const std::wstring& text) {
-    if (_activeCtx)
-      _CommitAndEnd(_activeCtx, text);
+  // 鼠标点击候选：选中该候选并提交
+  _candWnd->OnPick = [this](int idx) {
+    if (!_activeCtx)
+      return;
+    if (idx < 0 || idx >= (int)_engine.Candidates().size())
+      return;
+    std::wstring text = _engine.Candidates()[idx].text;
+    _CommitAndEnd(_activeCtx, text);
     _engine.Reset();
     _HideCandidates();
   };
   return S_OK;
 }
 
-STDMETHODIMP CJidaTextService::Deactivate() {
+STDMETHODIMP CJiDaTextService::Deactivate() {
   _Cancel();
   if (_threadMgr) {
     ITfKeystrokeMgr* keyMgr = nullptr;
@@ -108,11 +135,11 @@ STDMETHODIMP CJidaTextService::Deactivate() {
   return S_OK;
 }
 
-STDMETHODIMP CJidaTextService::OnSetFocus(BOOL) {
+STDMETHODIMP CJiDaTextService::OnSetFocus(BOOL) {
   return S_OK;
 }
 
-STDMETHODIMP CJidaTextService::OnTestKeyDown(ITfContext*,
+STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
                                              WPARAM wParam,
                                              LPARAM,
                                              BOOL* pfEaten) {
@@ -142,8 +169,25 @@ STDMETHODIMP CJidaTextService::OnTestKeyDown(ITfContext*,
       *pfEaten = TRUE;
     return S_OK;
   }
-
-  // 标点 / 分号：仅在已有编码时可能被消费
+  // 上下左右：有候选时用于导航
+  if (wParam == VK_UP || wParam == VK_DOWN || wParam == VK_LEFT ||
+      wParam == VK_RIGHT) {
+    if (hasInput && hasCand)
+      *pfEaten = TRUE;
+    return S_OK;
+  }
+  // 翻页
+  if (wParam == VK_PRIOR || wParam == VK_NEXT) {
+    if (hasInput && hasCand)
+      *pfEaten = TRUE;
+    return S_OK;
+  }
+  if (wParam == VK_OEM_MINUS || wParam == VK_OEM_PLUS) {
+    if (hasInput && hasCand)
+      *pfEaten = TRUE;
+    return S_OK;
+  }
+  // 标点 / 分号
   if (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
       wParam == VK_OEM_2 || wParam == VK_OEM_3 || wParam == VK_OEM_4 ||
       wParam == VK_OEM_5 || wParam == VK_OEM_6 || wParam == VK_OEM_7) {
@@ -151,18 +195,10 @@ STDMETHODIMP CJidaTextService::OnTestKeyDown(ITfContext*,
       *pfEaten = TRUE;
     return S_OK;
   }
-
-  // 翻页：有候选才吞
-  if (wParam == VK_OEM_MINUS || wParam == VK_OEM_PLUS || wParam == VK_PRIOR ||
-      wParam == VK_NEXT) {
-    if (hasInput && hasCand)
-      *pfEaten = TRUE;
-    return S_OK;
-  }
   return S_OK;
 }
 
-STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
+STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
                                          WPARAM wParam,
                                          LPARAM lParam,
                                          BOOL* pfEaten) {
@@ -178,23 +214,47 @@ STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
   if (shift && wParam >= 'A' && wParam <= 'Z')
     return S_OK;
 
-  // 翻页
-  if (wParam == VK_OEM_MINUS || wParam == VK_PRIOR) {
-    if (_candWnd) {
-      _candWnd->PageUp();
-      _engine.SetPage(_candWnd->PageStart());
+  // 上下键：竖向布局时移动选中，横向布局时翻页
+  if (wParam == VK_UP || wParam == VK_DOWN) {
+    if (!_engine.Candidates().empty()) {
+      *pfEaten = TRUE;
+      bool vert = (g_config.candLayout == CandLayout::Vertical);
+      if (vert)
+        _engine.MoveSelection(wParam == VK_UP ? -1 : 1);
+      else
+        _engine.MovePage(wParam == VK_UP ? -1 : 1);
       _ShowCandidates(pic);
     }
-    *pfEaten = TRUE;
     return S_OK;
   }
-  if (wParam == VK_OEM_PLUS || wParam == VK_NEXT) {
-    if (_candWnd) {
-      _candWnd->PageDown();
-      _engine.SetPage(_candWnd->PageStart());
+  // 左右键：横向布局时移动选中，竖向布局时翻页
+  if (wParam == VK_LEFT || wParam == VK_RIGHT) {
+    if (!_engine.Candidates().empty()) {
+      *pfEaten = TRUE;
+      bool vert = (g_config.candLayout == CandLayout::Vertical);
+      if (!vert)
+        _engine.MoveSelection(wParam == VK_LEFT ? -1 : 1);
+      else
+        _engine.MovePage(wParam == VK_LEFT ? -1 : 1);
       _ShowCandidates(pic);
     }
-    *pfEaten = TRUE;
+    return S_OK;
+  }
+  // 翻页
+  if (wParam == VK_PRIOR || wParam == VK_OEM_MINUS) {
+    if (!_engine.Candidates().empty()) {
+      *pfEaten = TRUE;
+      _engine.MovePage(-1);
+      _ShowCandidates(pic);
+    }
+    return S_OK;
+  }
+  if (wParam == VK_NEXT || wParam == VK_OEM_PLUS) {
+    if (!_engine.Candidates().empty()) {
+      *pfEaten = TRUE;
+      _engine.MovePage(1);
+      _ShowCandidates(pic);
+    }
     return S_OK;
   }
 
@@ -220,6 +280,7 @@ STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
       } else if (act == EngineAction::UpdateCandidates) {
         *pfEaten = TRUE;
         _SyncComposition(pic);
+        _ShowCandidates(pic);
       }
       return S_OK;
     }
@@ -232,7 +293,7 @@ STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 空格
+  // 空格：提交高亮项
   if (wParam == VK_SPACE) {
     if (_engine.IsWaitingDateOrAmount()) {
       *pfEaten = TRUE;
@@ -247,25 +308,23 @@ STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // ESC / 回车：取消当前输入，不上屏
+  // ESC / 回车：取消输入
   if (wParam == VK_ESCAPE || wParam == VK_RETURN) {
     if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
       *pfEaten = TRUE;
       _CancelWithContext(pic);
       _HideCandidates();
     }
-    // 无输入时 pfEaten = FALSE，宿主正常处理 ESC / 回车
     return S_OK;
   }
 
   // 退格
   if (wParam == VK_BACK) {
     if (!_engine.Buffer().empty() && !_engine.Candidates().empty()) {
-      // 有候选：吞掉，逐个删字母
       *pfEaten = TRUE;
       _engine.OnBackspace();
       if (_engine.Buffer().empty()) {
-        _Cancel();
+        _CancelWithContext(pic);
         _HideCandidates();
       } else {
         _SyncComposition(pic);
@@ -274,8 +333,7 @@ STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
     } else if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
       // 无候选但有编码：一次性清空编码，不吞键让宿主删除文档字
       *pfEaten = FALSE;
-      _engine.Reset();
-      _Cancel();
+      _CancelWithContext(pic);
       _HideCandidates();
     }
     // buffer 为空：pfEaten 保持 FALSE，宿主正常处理退格
@@ -307,16 +365,13 @@ STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
         _HideCandidates();
         return S_OK;
       }
-      // 无第二重码：清空编码，让宿主输入分号
-      _engine.Reset();
-      _Cancel();
+      _CancelWithContext(pic);
       _HideCandidates();
     }
-    // pfEaten = FALSE，宿主输入分号
     return S_OK;
   }
 
-  // 日期/金额等待态下的数字和点（保留）
+  // 日期/金额等待态下的数字/点
   if (_engine.IsWaitingDateOrAmount() &&
       (iswdigit((wchar_t)wParam) || wParam == VK_OEM_PERIOD)) {
     std::wstring committed;
@@ -341,21 +396,19 @@ STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
       if (!firstCand.empty())
         _CommitAndEnd(pic, firstCand);
       else
-        _Cancel();
+        _CancelWithContext(pic);
       _CommitAndEnd(pic, punct);
       _engine.Reset();
       _HideCandidates();
       return S_OK;
     }
-    // 编码存在但标点不在映射里：清空编码，让宿主正常输入这个标点
-    _engine.Reset();
-    _Cancel();
+    _CancelWithContext(pic);
     _HideCandidates();
   }
-  return S_OK;  // pfEaten = FALSE，宿主处理标点
+  return S_OK;
 }
 
-void CJidaTextService::_HandleLetterResult(ITfContext* pic,
+void CJiDaTextService::_HandleLetterResult(ITfContext* pic,
                                            EngineAction act,
                                            std::wstring& committed,
                                            std::wstring& newBuffer) {
@@ -380,23 +433,7 @@ void CJidaTextService::_HandleLetterResult(ITfContext* pic,
   }
 }
 
-void CJidaTextService::_EnsureComposition(ITfContext* pic) {
-  if (_composition)
-    return;
-  if (_clientId == TF_CLIENTID_NULL) {
-    return;
-  }
-  ITfComposition* comp = nullptr;
-  auto* s = new CStartCompositionSession(pic, _engine.Buffer(), &comp);
-
-  HRESULT phrSession = E_FAIL;
-  HRESULT hr = pic->RequestEditSession(
-      _clientId, s, TF_ES_SYNC | TF_ES_READWRITE, &phrSession);
-  s->Release();
-  _composition = comp;
-}
-
-void CJidaTextService::_CommitAndEnd(ITfContext* pic,
+void CJiDaTextService::_CommitAndEnd(ITfContext* pic,
                                      const std::wstring& text) {
   if (text.empty())
     return;
@@ -405,17 +442,35 @@ void CJidaTextService::_CommitAndEnd(ITfContext* pic,
 
   auto* s = new CCommitSession(pic, _composition, text);
   HRESULT phrSession = E_FAIL;
-  HRESULT hr = pic->RequestEditSession(
-      _clientId, s, TF_ES_SYNC | TF_ES_READWRITE, &phrSession);
+  pic->RequestEditSession(_clientId, s, TF_ES_SYNC | TF_ES_READWRITE,
+                          &phrSession);
   s->Release();
-
   if (_composition) {
     _composition->Release();
     _composition = nullptr;
   }
 }
 
-void CJidaTextService::_SyncComposition(ITfContext* pic) {
+void CJiDaTextService::_EnsureComposition(ITfContext* pic) {
+  if (_composition)
+    return;
+  if (_clientId == TF_CLIENTID_NULL)
+    return;
+  ITfComposition* comp = nullptr;
+  auto* s = new CStartCompositionSession(pic, _engine.Buffer(), &comp);
+  HRESULT phrSession = E_FAIL;
+  pic->RequestEditSession(_clientId, s, TF_ES_SYNC | TF_ES_READWRITE,
+                          &phrSession);
+  s->Release();
+  _composition = comp;
+}
+
+void CJiDaTextService::_SyncComposition(ITfContext* pic) {
+  if (!g_config.inlinePreedit) {
+    if (!_composition)
+      _EnsureComposition(pic);
+    return;
+  }
   if (!_composition) {
     _EnsureComposition(pic);
     return;
@@ -427,10 +482,9 @@ void CJidaTextService::_SyncComposition(ITfContext* pic) {
   s->Release();
 }
 
-void CJidaTextService::_ShowCandidates(ITfContext* pic) {
+void CJiDaTextService::_ShowCandidates(ITfContext* pic) {
   if (!_candWnd)
     return;
-  // 只要 buffer 非空，就显示候选窗口（即使无候选，也显示编码标题）
   if (_engine.Buffer().empty()) {
     _candWnd->Hide();
     return;
@@ -439,38 +493,79 @@ void CJidaTextService::_ShowCandidates(ITfContext* pic) {
   _candWnd->SetTitle(_engine.Buffer());
 
   RECT rcCaret = {0, 0, 0, 0};
+  bool bPositioned = false;  // 标记是否成功获得了有效的光标位置
+
   ITfContextView* view = nullptr;
   if (SUCCEEDED(pic->GetActiveView(&view)) && view) {
     ITfRange* range = nullptr;
-    if (_composition) {
-      _composition->GetRange(&range);
-    } else {
-      TF_SELECTION sel;
-      ULONG n = 0;
-      if (SUCCEEDED(pic->GetSelection(TF_INVALID_EDIT_COOKIE,
-                                      TF_DEFAULT_SELECTION, 1, &sel, &n)) &&
-          n)
-        range = sel.range;
+    TF_SELECTION sel;
+    ULONG n = 0;
+    // 获取当前选择范围（光标位置）
+    if (SUCCEEDED(pic->GetSelection(TF_INVALID_EDIT_COOKIE,
+                                    TF_DEFAULT_SELECTION, 1, &sel, &n)) &&
+        n) {
+      range = sel.range;
     }
+
     if (range) {
-      RECT r;
+      RECT r = {0, 0, 0, 0};
       BOOL clipped = FALSE;
-      view->GetTextExt(TF_INVALID_EDIT_COOKIE, range, &r, &clipped);
-      rcCaret = r;
+      HRESULT hrExt =
+          view->GetTextExt(TF_INVALID_EDIT_COOKIE, range, &r, &clipped);
+
+      // 核心判断：只有返回成功 且 矩形可用 时，才认为定位有效
+      if (SUCCEEDED(hrExt) && IsUsableCaretExtent(r)) {
+        rcCaret = r;
+        bPositioned = true;
+      } else {
+        // 可以在这里加日志，方便调试是哪个宿主/场景导致失效
+        // OutputDebugStringW(L"[JiDa] GetTextExt returned invalid rect or
+        // failed. Falling back.\n");
+      }
       range->Release();
     }
     view->Release();
   }
+
+  // --- 兜底定位策略 ---
+  if (!bPositioned) {
+    // 策略 A (推荐): 使用宿主窗口的客户区左上角作为后备位置
+    // 这需要你能拿到宿主窗口的 HWND。在 TSF 中可以通过 ITfContextView::GetWnd
+    // 获取。
+    HWND hwndHost = nullptr;
+    if (SUCCEEDED(pic->GetActiveView(&view)) && view) {  // 重新获取 view
+      view->GetWnd(&hwndHost);
+      view->Release();
+    }
+
+    if (hwndHost != nullptr) {
+      POINT pt = {0, 0};
+      ClientToScreen(hwndHost, &pt);  // 转换为屏幕坐标
+      rcCaret.left = pt.x;
+      rcCaret.top = pt.y;
+      rcCaret.right = pt.x + 1;  // 给一个 1x1 的小区域
+      rcCaret.bottom = pt.y + 1;
+    } else {
+      // 策略 B (终极兜底): 放在屏幕工作区的左上角稍靠内，避免完全贴边
+      SystemParametersInfo(SPI_GETWORKAREA, 0, &rcCaret, 0);
+      // 在左上角基础上偏移一点，避免和系统 UI 重叠
+      rcCaret.left += 20;
+      rcCaret.top += 20;
+      rcCaret.right = rcCaret.left + 1;
+      rcCaret.bottom = rcCaret.top + 1;
+    }
+  }
+
   UINT dpi = GetDpiForRect(rcCaret);
-  _candWnd->Show(_engine.Candidates(), rcCaret, dpi);
+  _candWnd->Show(_engine.Candidates(), _engine.SelectedIndex(), rcCaret, dpi);
 }
 
-void CJidaTextService::_HideCandidates() {
+void CJiDaTextService::_HideCandidates() {
   if (_candWnd)
     _candWnd->Hide();
 }
 
-void CJidaTextService::_Cancel() {
+void CJiDaTextService::_Cancel() {
   if (_composition) {
     _composition->Release();
     _composition = nullptr;
@@ -478,7 +573,7 @@ void CJidaTextService::_Cancel() {
   _engine.Reset();
 }
 
-void CJidaTextService::_CancelWithContext(ITfContext* pic) {
+void CJiDaTextService::_CancelWithContext(ITfContext* pic) {
   // 结束组合（提交空文本）——纯 Release 只减引用，不会把组合从文档里摘掉
   if (_composition) {
     auto* s = new CCommitSession(pic, _composition, L"");
@@ -491,7 +586,7 @@ void CJidaTextService::_CancelWithContext(ITfContext* pic) {
   _engine.Reset();
 }
 
-STDMETHODIMP CJidaTextService::OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) {
+STDMETHODIMP CJiDaTextService::OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) {
   _Cancel();
   _HideCandidates();
   if (_activeCtx) {

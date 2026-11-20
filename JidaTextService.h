@@ -2,13 +2,13 @@
 #include <msctf.h>
 #include "CandidateWindow.h"
 #include "Globals.h"
-#include "JidaEngine.h"
+#include "JiDaEngine.h"
 
-class CJidaTextService : public ITfTextInputProcessor,
+class CJiDaTextService : public ITfTextInputProcessor,
                          public ITfKeyEventSink,
                          public ITfThreadMgrEventSink {
  public:
-  CJidaTextService();
+  CJiDaTextService();
   STDMETHODIMP QueryInterface(REFIID, void**) override;
   STDMETHODIMP_(ULONG) AddRef() override;
   STDMETHODIMP_(ULONG) Release() override;
@@ -33,7 +33,7 @@ class CJidaTextService : public ITfTextInputProcessor,
   STDMETHODIMP OnPopContext(ITfContext*) override { return S_OK; }
 
  private:
-  ~CJidaTextService();
+  ~CJiDaTextService();
   void _CommitAndEnd(ITfContext* pic, const std::wstring& text);
   void _EnsureComposition(ITfContext* pic);
   void _SyncComposition(ITfContext* pic);
@@ -52,7 +52,7 @@ class CJidaTextService : public ITfTextInputProcessor,
   DWORD _sinkCookie = TF_INVALID_COOKIE;
   ITfComposition* _composition = nullptr;
 
-  JidaEngine _engine;
+  JiDaEngine _engine;
   std::unique_ptr<CCandidateWindow> _candWnd;
   ITfContext* _activeCtx = nullptr;
 };

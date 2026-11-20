@@ -4,22 +4,22 @@
 #include <cwctype>
 
 HINSTANCE g_hInstance = nullptr;
-const CLSID CLSID_JidaTSF = {
-    0x7A3E8F1C,
-    0x4B2D,
-    0x4E5F,
-    {0x9C, 0x8A, 0x1B, 0x6D, 0x3E, 0x7F, 0x2A, 0x5C}};
-const GUID GUID_LBI = {0x2A5C3E7F,
-                       0x1B6D,
-                       0x3E4F,
-                       {0x8A, 0x9C, 0x1C, 0x3E, 0x5F, 0x7A, 0x2B, 0x8C}};
+
+const CLSID CLSID_JiDaTSF = {0x7A3E8F1C,
+                             0x4B2D,
+                             0x4E5F,
+                             {0x9C, 0x8A, 0x1B, 0x6D, 0x3E, 0x7F, 0x2A, 0x5C}};
+const GUID GUID_JiDa_LBI = {0x2A5C3E7F,
+                            0x1B6D,
+                            0x3E4F,
+                            {0x8A, 0x9C, 0x1C, 0x3E, 0x5F, 0x7A, 0x2B, 0x8C}};
 
 std::vector<WubiEntry> g_entries;
 std::vector<TrieNode> g_trie;
 int g_trieRoot = 0;
 
 std::vector<std::pair<wchar_t, std::wstring>> g_punctMap;
-JidianConfig g_config;
+JiDaConfig g_config;
 
 static void StripEntryPrefix(std::wstring& s) {
   while (!s.empty()) {
@@ -40,18 +40,16 @@ static void SplitTokens(const std::wstring& s, std::vector<std::wstring>& out) {
         out.push_back(cur);
         cur.clear();
       }
-    } else {
+    } else
       cur += c;
-    }
   }
   if (!cur.empty())
     out.push_back(cur);
 }
 
-static void ParseJidianFormat(FILE* fp, std::vector<WubiEntry>& entries) {
+static void ParseJiDaFormat(FILE* fp, std::vector<WubiEntry>& entries) {
   wchar_t line[8192];
   bool inText = false, inDesc = false;
-
   while (fgetws(line, 8192, fp)) {
     std::wstring s = line;
     if (!s.empty() && s[0] == 0xFEFF)
@@ -152,7 +150,7 @@ static void ParseSimpleFormat(FILE* fp, std::vector<WubiEntry>& entries) {
 static void BuildTrie() {
   g_trie.clear();
   g_trie.reserve(g_entries.size() * 2 + 1);
-  g_trie.emplace_back();  // root
+  g_trie.emplace_back();
   g_trieRoot = 0;
 
   for (int i = 0; i < (int)g_entries.size(); ++i) {
@@ -174,7 +172,6 @@ static void BuildTrie() {
       g_trie[cur].ownEntries.push_back(i);
   }
 
-  // 后序遍历：merged = own + 所有子节点 merged（保持短码优先）
   struct Builder {
     std::vector<TrieNode>& t;
     void build(int n) {
@@ -195,17 +192,17 @@ static void BuildTrie() {
   Builder{g_trie}.build(g_trieRoot);
 }
 
-bool LoadJidaTable(const std::wstring& path) {
+bool LoadJiDaTable(const std::wstring& path) {
   FILE* fp = nullptr;
   if (_wfopen_s(&fp, path.c_str(), L"r, ccs=UTF-8") != 0 || !fp)
     return false;
 
-  bool isJidian = false;
+  bool isJiDa = false;
   {
     wchar_t line[4096];
     while (fgetws(line, 4096, fp))
       if (wcsstr(line, L"[Text]")) {
-        isJidian = true;
+        isJiDa = true;
         break;
       }
   }
@@ -213,13 +210,12 @@ bool LoadJidaTable(const std::wstring& path) {
 
   std::vector<WubiEntry> entries;
   entries.reserve(150000);
-  if (isJidian)
-    ParseJidianFormat(fp, entries);
+  if (isJiDa)
+    ParseJiDaFormat(fp, entries);
   else
     ParseSimpleFormat(fp, entries);
   fclose(fp);
 
-  // 按 (code 长度, code) 排序：短码在前
   std::stable_sort(entries.begin(), entries.end(),
                    [](const WubiEntry& a, const WubiEntry& b) {
                      if (a.code.size() != b.code.size())

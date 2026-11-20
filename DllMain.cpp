@@ -12,7 +12,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD r, LPVOID) {
     auto slash = dir.find_last_of(L"\\/");
     if (slash != std::wstring::npos)
       dir = dir.substr(0, slash + 1);
-    LoadJidaTable(dir + L"data\\jidian_wubi86.txt");
+    LoadJiDaTable(dir + L"data\\jidian_wubi86.txt");
   }
   return TRUE;
 }

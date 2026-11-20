@@ -1,22 +1,34 @@
-#include "JidaEngine.h"
+#include "JiDaEngine.h"
 #include <algorithm>
 #include <cstdio>
 #include <cwctype>
 #include <string_view>
 
-void JidaEngine::Reset() {
+void JiDaEngine::Reset() {
   buffer_.clear();
   candidates_.clear();
   semicolonTail_.clear();
   waitDateOrAmount_ = false;
   pageStart_ = 0;
+  selected_ = 0;
 }
-void JidaEngine::CommitText(const std::wstring& t) {
+void JiDaEngine::CommitText(const std::wstring& t) {
   if (!t.empty())
     lastCommitted_ = t;
 }
 
-// Trie 单步查找辅助
+void JiDaEngine::ClampSelection() {
+  if (candidates_.empty()) {
+    selected_ = 0;
+    return;
+  }
+  int pageEnd = (std::min)(pageStart_ + kPageSize, (int)candidates_.size());
+  if (selected_ < pageStart_)
+    selected_ = pageStart_;
+  if (selected_ >= pageEnd)
+    selected_ = pageEnd - 1;
+}
+
 static int TrieStep(int cur, wchar_t ch) {
   if (cur < 0)
     return -1;
@@ -35,9 +47,10 @@ static int TrieWalk(const std::wstring& code) {
   return cur;
 }
 
-void JidaEngine::Query(const std::wstring& code) {
+void JiDaEngine::Query(const std::wstring& code) {
   candidates_.clear();
   pageStart_ = 0;
+  selected_ = 0;
   if (code.empty())
     return;
 
@@ -85,7 +98,7 @@ void JidaEngine::Query(const std::wstring& code) {
   }
 }
 
-EngineAction JidaEngine::OnLetter(wchar_t ch,
+EngineAction JiDaEngine::OnLetter(wchar_t ch,
                                   std::wstring& committed,
                                   std::wstring& newBuffer) {
   ch = towlower(ch);
@@ -100,7 +113,6 @@ EngineAction JidaEngine::OnLetter(wchar_t ch,
     Reset();
     return EngineAction::Commit;
   }
-
   if (waitDateOrAmount_) {
     if (iswdigit(ch) || ch == L'.' || ch == L';') {
       semicolonTail_ += ch;
@@ -136,13 +148,13 @@ EngineAction JidaEngine::OnLetter(wchar_t ch,
   return EngineAction::UpdateCandidates;
 }
 
-bool JidaEngine::IsFourCodeComplete() const {
+bool JiDaEngine::IsFourCodeComplete() const {
   if (buffer_.size() != 4 || waitDateOrAmount_)
     return false;
   return !candidates_.empty();
 }
 
-bool JidaEngine::OnDigit(int digit, std::wstring& committed) {
+bool JiDaEngine::OnDigit(int digit, std::wstring& committed) {
   if (digit < 1 || digit > 9)
     return false;
   int idx = pageStart_ + digit - 1;
@@ -155,16 +167,62 @@ bool JidaEngine::OnDigit(int digit, std::wstring& committed) {
   return false;
 }
 
-bool JidaEngine::OnSpace(std::wstring& committed) {
+bool JiDaEngine::OnSpace(std::wstring& committed) {
   if (candidates_.empty())
     return false;
-  committed = candidates_.front().text;
+  int idx = selected_;
+  if (idx < 0 || idx >= (int)candidates_.size())
+    idx = 0;
+  committed = candidates_[idx].text;
   CommitText(committed);
   Reset();
   return true;
 }
 
-bool JidaEngine::OnSemicolon(std::wstring& committed,
+void JiDaEngine::MoveSelection(int delta) {
+  if (candidates_.empty())
+    return;
+  int pageEnd = (std::min)(pageStart_ + kPageSize, (int)candidates_.size());
+  int next = selected_ + delta;
+  if (next < pageStart_) {
+    // 上一页最后一项
+    if (pageStart_ > 0) {
+      pageStart_ -= kPageSize;
+      if (pageStart_ < 0)
+        pageStart_ = 0;
+      pageEnd = (std::min)(pageStart_ + kPageSize, (int)candidates_.size());
+      selected_ = pageEnd - 1;
+    }
+    return;
+  }
+  if (next >= pageEnd) {
+    // 下一页第一项
+    if (pageEnd < (int)candidates_.size()) {
+      pageStart_ += kPageSize;
+      selected_ = pageStart_;
+    }
+    return;
+  }
+  selected_ = next;
+}
+
+void JiDaEngine::MovePage(int dir) {
+  if (candidates_.empty())
+    return;
+  if (dir < 0) {
+    if (pageStart_ >= kPageSize)
+      pageStart_ -= kPageSize;
+    else
+      pageStart_ = 0;
+  } else {
+    if (pageStart_ + kPageSize < (int)candidates_.size())
+      pageStart_ += kPageSize;
+  }
+  selected_ = pageStart_;
+  ClampSelection();
+}
+
+bool JiDaEngine::OnSemicolon(std::wstring& committed,
                              bool& waitForDateOrAmount) {
   waitForDateOrAmount = false;
   if (!buffer_.empty() && g_config.semicolonSecond) {
@@ -183,7 +241,7 @@ bool JidaEngine::OnSemicolon(std::wstring& committed,
   return false;
 }
 
-EngineAction JidaEngine::OnSemicolonTail(wchar_t ch, std::wstring& committed) {
+EngineAction JiDaEngine::OnSemicolonTail(wchar_t ch, std::wstring& committed) {
   if (!waitDateOrAmount_)
     return EngineAction::None;
   if (ch == L';') {
@@ -213,7 +271,7 @@ EngineAction JidaEngine::OnSemicolonTail(wchar_t ch, std::wstring& committed) {
   return EngineAction::None;
 }
 
-bool JidaEngine::OnPunctuation(wchar_t ch,
+bool JiDaEngine::OnPunctuation(wchar_t ch,
                                std::wstring& punct,
                                std::wstring& firstCand) {
   if (!g_config.punctuationTop || buffer_.empty())
@@ -229,7 +287,7 @@ bool JidaEngine::OnPunctuation(wchar_t ch,
   return false;
 }
 
-void JidaEngine::OnBackspace() {
+void JiDaEngine::OnBackspace() {
   if (waitDateOrAmount_) {
     if (!semicolonTail_.empty())
       semicolonTail_.pop_back();
@@ -244,11 +302,10 @@ void JidaEngine::OnBackspace() {
   Query(buffer_);
 }
 
-bool JidaEngine::OnEnter(std::wstring& committed) {
-  // 极点的回车 = 取消当前输入，不上屏任何文字
+bool JiDaEngine::OnEnter(std::wstring& committed) {
   (void)committed;
   if (buffer_.empty() && !waitDateOrAmount_)
     return false;
   Reset();
-  return false;  // 返回 false 表示"没有文字需要提交"
+  return false;
 }

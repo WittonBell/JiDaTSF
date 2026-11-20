@@ -26,7 +26,7 @@ class CClassFactory : public IClassFactory {
                               void** ppv) override {
     if (pUnkOuter)
       return CLASS_E_NOAGGREGATION;
-    auto* svc = new CJidaTextService();
+    auto* svc = new CJiDaTextService();
     HRESULT hr = svc->QueryInterface(riid, ppv);
     svc->Release();
     return hr;
@@ -34,7 +34,7 @@ class CClassFactory : public IClassFactory {
   STDMETHODIMP LockServer(BOOL) override { return S_OK; }
 };
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
-  if (rclsid != CLSID_JidaTSF)
+  if (rclsid != CLSID_JiDaTSF)
     return CLASS_E_CLASSNOTAVAILABLE;
   auto* cf = new CClassFactory();
   HRESULT hr = cf->QueryInterface(riid, ppv);

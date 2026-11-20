@@ -4,22 +4,20 @@
 #include <string>
 #include <vector>
 #include "Globals.h"
-#include "JidaEngine.h"
+#include "JiDaEngine.h"
 
 class CCandidateWindow {
  public:
-  std::function<void(const std::wstring&)> OnPick;
+  std::function<void(int)> OnPick;  // 回调：被点/悬停的候选绝对索引
 
   bool Create(HINSTANCE hInst);
   void Destroy();
-  void Show(const std::vector<CandidateItem>& items, RECT rcCaret, UINT dpi);
+  void Show(const std::vector<CandidateItem>& items,
+            int selected,
+            RECT rcCaret,
+            UINT dpi);
   void Hide();
-  void PageUp();
-  void PageDown();
-
-  // 新增：设置候选窗口顶部显示的编码
   void SetTitle(const std::wstring& t) { _title = t; }
-  int PageStart() const { return _pageStart; }
 
  private:
   static LRESULT CALLBACK _WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -31,19 +29,23 @@ class CCandidateWindow {
 
   void _RebuildFont();
   void _UpdateSize();
+  int _HitTest(int x, int y) const;  // 命中 → 候选绝对索引，否则 -1
 
   HWND _hwnd = nullptr;
   UINT _dpi = 96;
   int _selected = 0;
+  int _hover = -1;
   int _pageStart = 0;
   std::vector<CandidateItem> _items;
-
-  std::wstring _title;  // 新增：当前编码
+  std::wstring _title;
 
   HFONT _font = nullptr;
   int _rowHeight = 0;
   int _padding = 0;
+  int _cellWidth = 0;  // 横向布局单格宽度
   int _maxWidth = 0;
+
+  int _lastX = -1, _lastY = -1, _lastW = -1, _lastH = -1;
 
   static constexpr int kPageSize = 9;
 };
