@@ -1,0 +1,35 @@
+#pragma code_page(65001)
+#include "resource.h"
+#include "winres.h"
+
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+
+IDI_JIDIANTSF ICON "res\\app.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x2L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "CompanyName", "JidaTSF"
+            VALUE "FileDescription", "Jida TSF IME"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "JidaTSF"
+            VALUE "OriginalFilename", "JidaTSF.dll"
+            VALUE "ProductName", "Jida TSF IME"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
