@@ -3,6 +3,7 @@
 #include "CandidateWindow.h"
 #include "Globals.h"
 #include "JiDaEngine.h"
+#include "StatusWindow.h"
 
 class CJiDaTextService : public ITfTextInputProcessor,
                          public ITfKeyEventSink,
@@ -55,4 +56,8 @@ class CJiDaTextService : public ITfTextInputProcessor,
   JiDaEngine _engine;
   std::unique_ptr<CCandidateWindow> _candWnd;
   ITfContext* _activeCtx = nullptr;
+
+ private:
+  CStatusWindow _statusWindow;
+  InputStatus _inputStatus;
 };

@@ -79,6 +79,40 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     _engine.Reset();
     _HideCandidates();
   };
+  _statusWindow.Create(
+      g_hInstance,  // TSF DLL 的 HINSTANCE
+      nullptr, L"极达五笔", _inputStatus, [this](StatusCommand cmd) {
+        switch (cmd) {
+          case StatusCommand::ToggleChinese:
+            _inputStatus.chinese = !_inputStatus.chinese;
+            break;
+
+          case StatusCommand::ToggleFullShape:
+            _inputStatus.fullShape = !_inputStatus.fullShape;
+            break;
+
+          case StatusCommand::TogglePunctuation:
+            _inputStatus.chinesePunctuation = !_inputStatus.chinesePunctuation;
+            break;
+
+          case StatusCommand::ToggleTraditional:
+            _inputStatus.traditional = !_inputStatus.traditional;
+            break;
+
+          case StatusCommand::OpenSettings:
+            // 打开设置窗口
+            break;
+
+          case StatusCommand::HideStatusWindow:
+            _statusWindow.Hide();
+            return;
+        }
+
+        // 同步到输入引擎
+        _engine.SetStatus(_inputStatus);
+
+        _statusWindow.UpdateStatus(_inputStatus);
+      });
   return S_OK;
 }
 
@@ -109,6 +143,7 @@ STDMETHODIMP CJiDaTextService::Deactivate() {
     _activeCtx->Release();
     _activeCtx = nullptr;
   }
+  _statusWindow.Destroy();
   return S_OK;
 }
 

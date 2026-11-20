@@ -1,0 +1,491 @@
+#include "StatusWindow.h"
+
+#include <strsafe.h>
+#include <windowsx.h>
+#include <utility>
+
+const wchar_t* CStatusWindow::WindowClassName = L"TSF.CustomInputStatusWindow";
+
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "gdi32.lib")
+
+namespace {
+constexpr COLORREF kWindowBg = RGB(245, 246, 248);
+constexpr COLORREF kBorder = RGB(175, 180, 188);
+constexpr COLORREF kText = RGB(45, 48, 54);
+constexpr COLORREF kMutedText = RGB(105, 110, 120);
+constexpr COLORREF kButtonBg = RGB(255, 255, 255);
+constexpr COLORREF kButtonHot = RGB(226, 237, 252);
+constexpr COLORREF kButtonActive = RGB(211, 229, 251);
+constexpr COLORREF kButtonBorder = RGB(205, 210, 218);
+constexpr COLORREF kAccent = RGB(35, 105, 190);
+
+constexpr int kBaseHeight = 34;
+constexpr int kBaseTitleWidth = 42;
+constexpr int kBaseButtonWidth = 34;
+constexpr int kBaseGap = 3;
+constexpr int kBaseMargin = 5;
+
+void DrawFrameRect(HDC dc, const RECT& rc, COLORREF color) {
+  HPEN pen = CreatePen(PS_SOLID, 1, color);
+  HGDIOBJ oldPen = SelectObject(dc, pen);
+  HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+  Rectangle(dc, rc.left, rc.top, rc.right, rc.bottom);
+  SelectObject(dc, oldBrush);
+  SelectObject(dc, oldPen);
+  DeleteObject(pen);
+}
+}  // namespace
+
+CStatusWindow::~CStatusWindow() {
+  Destroy();
+}
+
+bool CStatusWindow::Create(HINSTANCE instance,
+                           HWND owner,
+                           const wchar_t* imeName,
+                           const InputStatus& initialStatus,
+                           CommandHandler handler,
+                           int x,
+                           int y) {
+  if (_hwnd)
+    return true;
+
+  _instance = instance;
+  _owner = owner;
+  _handler = std::move(handler);
+  _status = initialStatus;
+
+  if (imeName && *imeName)
+    StringCchCopyW(_imeName, _countof(_imeName), imeName);
+
+  WNDCLASSEXW wc{};
+  wc.cbSize = sizeof(wc);
+  wc.style = CS_HREDRAW | CS_VREDRAW;
+  wc.lpfnWndProc = StaticWndProc;
+  wc.hInstance = _instance;
+  wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  wc.hbrBackground = nullptr;
+  wc.lpszClassName = WindowClassName;
+
+  if (!RegisterClassExW(&wc)) {
+    if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+      return false;
+  }
+
+  // WS_EX_NOACTIVATE prevents the status bar from stealing the edit focus.
+  // WS_EX_TOOLWINDOW keeps it out of the taskbar and Alt+Tab list.
+  // WS_EX_TOPMOST gives it the familiar floating-toolbar behavior.
+  const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
+
+  RebuildLayout();
+
+  const int width = Scale(kBaseMargin * 2 + kBaseTitleWidth + kBaseGap +
+                          5 * kBaseButtonWidth + 4 * kBaseGap + 5);
+  const int height = Scale(kBaseHeight);
+
+  if (x == CW_USEDEFAULT || y == CW_USEDEFAULT) {
+    RECT work{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    if (x == CW_USEDEFAULT)
+      x = work.right - width - Scale(24);
+    if (y == CW_USEDEFAULT)
+      y = work.bottom - height - Scale(48);
+  }
+
+  _hwnd = CreateWindowExW(exStyle, WindowClassName, _imeName, WS_POPUP, x, y,
+                          width, height, _owner, nullptr, _instance, this);
+
+  if (!_hwnd)
+    return false;
+
+  _created = true;
+  RebuildLayout();
+
+  // Do not activate the status window.
+  ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+  UpdateWindow(_hwnd);
+  return true;
+}
+
+void CStatusWindow::Destroy() {
+  if (_hwnd) {
+    HWND hwnd = _hwnd;
+    _hwnd = nullptr;
+    DestroyWindow(hwnd);
+  }
+
+  if (_font) {
+    DeleteObject(_font);
+    _font = nullptr;
+  }
+  if (_titleFont) {
+    DeleteObject(_titleFont);
+    _titleFont = nullptr;
+  }
+
+  _created = false;
+}
+
+void CStatusWindow::Show() {
+  if (_hwnd)
+    ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+}
+
+void CStatusWindow::Hide() {
+  if (_hwnd)
+    ShowWindow(_hwnd, SW_HIDE);
+}
+
+bool CStatusWindow::IsVisible() const {
+  return _hwnd && IsWindowVisible(_hwnd);
+}
+
+void CStatusWindow::UpdateStatus(const InputStatus& status) {
+  _status = status;
+  if (_hwnd) {
+    RebuildLayout();
+    InvalidateRect(_hwnd, nullptr, TRUE);
+  }
+}
+
+bool CStatusWindow::GetPosition(POINT* point) const {
+  if (!_hwnd || !point)
+    return false;
+
+  RECT rc{};
+  if (!GetWindowRect(_hwnd, &rc))
+    return false;
+
+  point->x = rc.left;
+  point->y = rc.top;
+  return true;
+}
+
+void CStatusWindow::SetPosition(int x, int y) {
+  if (_hwnd)
+    SetWindowPos(_hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+UINT CStatusWindow::Dpi() const {
+  if (_hwnd) {
+    using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+    auto fn = reinterpret_cast<GetDpiForWindowFn>(
+        GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"));
+    if (fn)
+      return fn(_hwnd);
+  }
+  return 96;
+}
+
+int CStatusWindow::Scale(int value) const {
+  return MulDiv(value, static_cast<int>(Dpi()), 96);
+}
+
+void CStatusWindow::RebuildLayout() {
+  if (!_hwnd)
+    return;
+
+  const int margin = Scale(kBaseMargin);
+  const int gap = Scale(kBaseGap);
+  const int titleWidth = Scale(kBaseTitleWidth);
+  const int buttonWidth = Scale(kBaseButtonWidth);
+  const int height = Scale(kBaseHeight);
+
+  int x = margin + titleWidth + gap;
+  const int top = Scale(4);
+  const int bottom = height - Scale(4);
+
+  const wchar_t* labels[] = {_status.chinese ? L"中" : L"英",
+                             _status.fullShape ? L"全" : L"半",
+                             _status.chinesePunctuation ? L"标" : L"符",
+                             _status.traditional ? L"繁" : L"简", L"设"};
+
+  const StatusCommand commands[] = {
+      StatusCommand::ToggleChinese, StatusCommand::ToggleFullShape,
+      StatusCommand::TogglePunctuation, StatusCommand::ToggleTraditional,
+      StatusCommand::OpenSettings};
+
+  _buttonCount = 5;
+  for (int i = 0; i < _buttonCount; ++i) {
+    Button& b = _buttons[i];
+    b.rect = {x, top, x + buttonWidth, bottom};
+    b.command = commands[i];
+    StringCchCopyW(b.text, _countof(b.text), labels[i]);
+    x += buttonWidth + gap;
+  }
+
+  if (_font)
+    DeleteObject(_font);
+  if (_titleFont)
+    DeleteObject(_titleFont);
+
+  _font = CreateFontW(-Scale(15), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                      CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                      L"Microsoft YaHei");
+
+  _titleFont = CreateFontW(-Scale(14), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                           DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+
+  if (_hwnd) {
+    const int width = x - gap + margin;
+    SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, width, height,
+                 SWP_NOMOVE | SWP_NOACTIVATE);
+  }
+}
+
+void CStatusWindow::Paint() {
+  PAINTSTRUCT ps{};
+  HDC hdc = BeginPaint(_hwnd, &ps);
+
+  RECT client{};
+  GetClientRect(_hwnd, &client);
+
+  HDC mem = CreateCompatibleDC(hdc);
+  HBITMAP bitmap = CreateCompatibleBitmap(hdc, client.right - client.left,
+                                          client.bottom - client.top);
+  HGDIOBJ oldBitmap = SelectObject(mem, bitmap);
+
+  HBRUSH bg = CreateSolidBrush(kWindowBg);
+  FillRect(mem, &client, bg);
+  DeleteObject(bg);
+
+  DrawFrameRect(mem, client, kBorder);
+
+  RECT titleRc{Scale(kBaseMargin), 0, Scale(kBaseMargin + kBaseTitleWidth),
+               client.bottom};
+
+  SetBkMode(mem, TRANSPARENT);
+  SetTextColor(mem, kAccent);
+  HGDIOBJ oldFont = SelectObject(
+      mem, _titleFont ? _titleFont : GetStockObject(DEFAULT_GUI_FONT));
+  DrawTextW(mem, _imeName, -1, &titleRc,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+  SelectObject(mem, oldFont);
+
+  for (int i = 0; i < _buttonCount; ++i)
+    DrawButton(mem, _buttons[i], i == _hotButton);
+
+  BitBlt(hdc, 0, 0, client.right, client.bottom, mem, 0, 0, SRCCOPY);
+
+  SelectObject(mem, oldBitmap);
+  DeleteObject(bitmap);
+  DeleteDC(mem);
+  EndPaint(_hwnd, &ps);
+}
+
+void CStatusWindow::DrawButton(HDC dc, const Button& button, bool hot) const {
+  bool active = false;
+  switch (button.command) {
+    case StatusCommand::ToggleChinese:
+      active = _status.chinese;
+      break;
+    case StatusCommand::ToggleFullShape:
+      active = _status.fullShape;
+      break;
+    case StatusCommand::TogglePunctuation:
+      active = _status.chinesePunctuation;
+      break;
+    case StatusCommand::ToggleTraditional:
+      active = _status.traditional;
+      break;
+    default:
+      break;
+  }
+
+  COLORREF fill = hot ? kButtonHot : (active ? kButtonActive : kButtonBg);
+  HBRUSH brush = CreateSolidBrush(fill);
+  FillRect(dc, &button.rect, brush);
+  DeleteObject(brush);
+  DrawFrameRect(dc, button.rect, hot ? kAccent : kButtonBorder);
+
+  SetBkMode(dc, TRANSPARENT);
+  SetTextColor(dc, kText);
+  HGDIOBJ oldFont =
+      SelectObject(dc, _font ? _font : GetStockObject(DEFAULT_GUI_FONT));
+  RECT textRc = button.rect;
+  DrawTextW(dc, button.text, -1, &textRc,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+  SelectObject(dc, oldFont);
+}
+
+int CStatusWindow::HitTestButton(POINT point) const {
+  for (int i = 0; i < _buttonCount; ++i) {
+    if (PtInRect(&_buttons[i].rect, point))
+      return i;
+  }
+  return -1;
+}
+
+void CStatusWindow::Invoke(StatusCommand command) {
+  if (_handler)
+    _handler(command);
+}
+
+void CStatusWindow::ShowContextMenu(POINT screenPoint) {
+  HMENU menu = CreatePopupMenu();
+  if (!menu)
+    return;
+
+  AppendMenuW(menu, MF_STRING | (_status.chinese ? MF_CHECKED : 0), 1001,
+              _status.chinese ? L"中文输入" : L"英文输入");
+  AppendMenuW(menu, MF_STRING | (_status.fullShape ? MF_CHECKED : 0), 1002,
+              _status.fullShape ? L"全角" : L"半角");
+  AppendMenuW(menu, MF_STRING | (_status.chinesePunctuation ? MF_CHECKED : 0),
+              1003, _status.chinesePunctuation ? L"中文标点" : L"英文标点");
+  AppendMenuW(menu, MF_STRING | (_status.traditional ? MF_CHECKED : 0), 1004,
+              _status.traditional ? L"繁体" : L"简体");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING, 1005, L"设置...");
+  AppendMenuW(menu, MF_STRING, 1006, L"隐藏状态栏");
+
+  const UINT cmd =
+      TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                     screenPoint.x, screenPoint.y, 0, _hwnd, nullptr);
+
+  DestroyMenu(menu);
+
+  switch (cmd) {
+    case 1001:
+      Invoke(StatusCommand::ToggleChinese);
+      break;
+    case 1002:
+      Invoke(StatusCommand::ToggleFullShape);
+      break;
+    case 1003:
+      Invoke(StatusCommand::TogglePunctuation);
+      break;
+    case 1004:
+      Invoke(StatusCommand::ToggleTraditional);
+      break;
+    case 1005:
+      Invoke(StatusCommand::OpenSettings);
+      break;
+    case 1006:
+      Invoke(StatusCommand::HideStatusWindow);
+      break;
+    default:
+      break;
+  }
+}
+
+LRESULT CALLBACK CStatusWindow::StaticWndProc(HWND hwnd,
+                                              UINT msg,
+                                              WPARAM wParam,
+                                              LPARAM lParam) {
+  CStatusWindow* self =
+      reinterpret_cast<CStatusWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+  if (msg == WM_NCCREATE) {
+    auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+    self = static_cast<CStatusWindow*>(cs->lpCreateParams);
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    self->_hwnd = hwnd;
+  }
+
+  return self ? self->WndProc(msg, wParam, lParam)
+              : DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+LRESULT CStatusWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+  switch (msg) {
+    case WM_MOUSEACTIVATE:
+      return MA_NOACTIVATE;
+
+    case WM_ERASEBKGND:
+      return 1;
+
+    case WM_PAINT:
+      Paint();
+      return 0;
+
+    case WM_MOUSEMOVE: {
+      if (!_trackingMouse) {
+        TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, _hwnd, 0};
+        TrackMouseEvent(&tme);
+        _trackingMouse = true;
+      }
+
+      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+      const int hit = HitTestButton(pt);
+      if (hit != _hotButton) {
+        _hotButton = hit;
+        InvalidateRect(_hwnd, nullptr, FALSE);
+      }
+      return 0;
+    }
+
+    case WM_MOUSELEAVE:
+      _trackingMouse = false;
+      if (_pressedButton < 0)
+        _hotButton = -1;
+      InvalidateRect(_hwnd, nullptr, FALSE);
+      return 0;
+
+    case WM_LBUTTONDOWN: {
+      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+      const int hit = HitTestButton(pt);
+      if (hit >= 0) {
+        SetCapture(_hwnd);
+        _pressedButton = hit;
+        _hotButton = hit;
+        InvalidateRect(_hwnd, nullptr, FALSE);
+      } else {
+        // Drag the blank/title area without activating the window.
+        ReleaseCapture();
+        SendMessageW(_hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+      }
+      return 0;
+    }
+
+    case WM_LBUTTONUP: {
+      const int pressed = _pressedButton;
+      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+      const int released = HitTestButton(pt);
+      _pressedButton = -1;
+      if (GetCapture() == _hwnd)
+        ReleaseCapture();
+
+      if (pressed >= 0 && pressed == released)
+        Invoke(_buttons[pressed].command);
+
+      _hotButton = released;
+      InvalidateRect(_hwnd, nullptr, FALSE);
+      return 0;
+    }
+
+    case WM_CAPTURECHANGED:
+      _pressedButton = -1;
+      return 0;
+
+    case WM_RBUTTONUP: {
+      POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+      ClientToScreen(_hwnd, &pt);
+      ShowContextMenu(pt);
+      return 0;
+    }
+
+    case WM_DPICHANGED: {
+      const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+      SetWindowPos(_hwnd, HWND_TOPMOST, suggested->left, suggested->top,
+                   suggested->right - suggested->left,
+                   suggested->bottom - suggested->top, SWP_NOACTIVATE);
+      RebuildLayout();
+      InvalidateRect(_hwnd, nullptr, TRUE);
+      return 0;
+    }
+
+    case WM_NCDESTROY: {
+      HWND hwnd = _hwnd;
+      SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+      _hwnd = nullptr;
+      return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    default:
+      return DefWindowProcW(_hwnd, msg, wParam, lParam);
+  }
+}

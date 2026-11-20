@@ -1,5 +1,6 @@
 #pragma once
 #include "Globals.h"
+#include "StatusWindow.h"
 
 struct CandidateItem {
   std::wstring text;
@@ -38,6 +39,7 @@ class JiDaEngine {
   int PageStart() const { return pageStart_; }
   bool IsFourCodeComplete() const;
   bool IsWaitingDateOrAmount() const { return waitDateOrAmount_; }
+  void SetStatus(InputStatus status) { _inputStatus = status; }
 
   static constexpr int kPageSize = 9;
 
@@ -53,4 +55,6 @@ class JiDaEngine {
   bool waitDateOrAmount_ = false;
   int pageStart_ = 0;
   int selected_ = 0;
+
+  InputStatus _inputStatus;
 };

@@ -83,6 +83,7 @@
     <ClCompile Include="JidaTextService.cpp" />
     <ClCompile Include="CandidateWindow.cpp" />
     <ClCompile Include="DpiHelper.cpp" />
+    <ClCompile Include="StatusWindow.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Globals.h" />
@@ -92,6 +93,7 @@
     <ClInclude Include="CandidateWindow.h" />
     <ClInclude Include="DpiHelper.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="StatusWindow.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="JidaTSF.rc" />
