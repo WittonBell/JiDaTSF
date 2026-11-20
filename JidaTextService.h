@@ -5,8 +5,8 @@
 #include "JidaEngine.h"
 
 class CJidaTextService : public ITfTextInputProcessor,
-                           public ITfKeyEventSink,
-                           public ITfThreadMgrEventSink {
+                         public ITfKeyEventSink,
+                         public ITfThreadMgrEventSink {
  public:
   CJidaTextService();
   STDMETHODIMP QueryInterface(REFIID, void**) override;
@@ -40,6 +40,7 @@ class CJidaTextService : public ITfTextInputProcessor,
   void _ShowCandidates(ITfContext* pic);
   void _HideCandidates();
   void _Cancel();
+  void _CancelWithContext(ITfContext* pic);
   void _HandleLetterResult(ITfContext* pic,
                            EngineAction act,
                            std::wstring& committed,

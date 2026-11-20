@@ -134,18 +134,16 @@ STDMETHODIMP CJidaTextService::OnTestKeyDown(ITfContext*,
       *pfEaten = TRUE;
     return S_OK;
   }
-  if (wParam == VK_SPACE || wParam == VK_RETURN) {
-    if (hasInput)
-      *pfEaten = TRUE;
-    return S_OK;
-  }
-  if (wParam == VK_BACK) {
+
+  // ESC 和回车：只有在有编码/等待态时才吞，否则交给宿主
+  if (wParam == VK_ESCAPE || wParam == VK_RETURN || wParam == VK_SPACE ||
+      wParam == VK_BACK) {
     if (hasInput)
       *pfEaten = TRUE;
     return S_OK;
   }
 
-  // 分号、标点：仅在已有编码时才可能被消费（顶字上屏）
+  // 标点 / 分号：仅在已有编码时可能被消费
   if (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
       wParam == VK_OEM_2 || wParam == VK_OEM_3 || wParam == VK_OEM_4 ||
       wParam == VK_OEM_5 || wParam == VK_OEM_6 || wParam == VK_OEM_7) {
@@ -249,16 +247,14 @@ STDMETHODIMP CJidaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 回车
-  if (wParam == VK_RETURN) {
-    if (!_engine.Buffer().empty() && !_engine.IsWaitingDateOrAmount()) {
-      std::wstring committed;
-      if (_engine.OnEnter(committed)) {
-        *pfEaten = TRUE;
-        _CommitAndEnd(pic, committed);
-        _HideCandidates();
-      }
+  // ESC / 回车：取消当前输入，不上屏
+  if (wParam == VK_ESCAPE || wParam == VK_RETURN) {
+    if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
+      *pfEaten = TRUE;
+      _CancelWithContext(pic);
+      _HideCandidates();
     }
+    // 无输入时 pfEaten = FALSE，宿主正常处理 ESC / 回车
     return S_OK;
   }
 
@@ -476,6 +472,19 @@ void CJidaTextService::_HideCandidates() {
 
 void CJidaTextService::_Cancel() {
   if (_composition) {
+    _composition->Release();
+    _composition = nullptr;
+  }
+  _engine.Reset();
+}
+
+void CJidaTextService::_CancelWithContext(ITfContext* pic) {
+  // 结束组合（提交空文本）——纯 Release 只减引用，不会把组合从文档里摘掉
+  if (_composition) {
+    auto* s = new CCommitSession(pic, _composition, L"");
+    pic->RequestEditSession(_clientId, s, TF_ES_SYNC | TF_ES_READWRITE,
+                            nullptr);
+    s->Release();
     _composition->Release();
     _composition = nullptr;
   }

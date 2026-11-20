@@ -86,8 +86,8 @@ void JidaEngine::Query(const std::wstring& code) {
 }
 
 EngineAction JidaEngine::OnLetter(wchar_t ch,
-                                    std::wstring& committed,
-                                    std::wstring& newBuffer) {
+                                  std::wstring& committed,
+                                  std::wstring& newBuffer) {
   ch = towlower(ch);
   if (ch < L'a' || ch > L'z')
     return EngineAction::None;
@@ -165,7 +165,7 @@ bool JidaEngine::OnSpace(std::wstring& committed) {
 }
 
 bool JidaEngine::OnSemicolon(std::wstring& committed,
-                               bool& waitForDateOrAmount) {
+                             bool& waitForDateOrAmount) {
   waitForDateOrAmount = false;
   if (!buffer_.empty() && g_config.semicolonSecond) {
     if (candidates_.size() >= 2) {
@@ -183,8 +183,7 @@ bool JidaEngine::OnSemicolon(std::wstring& committed,
   return false;
 }
 
-EngineAction JidaEngine::OnSemicolonTail(wchar_t ch,
-                                           std::wstring& committed) {
+EngineAction JidaEngine::OnSemicolonTail(wchar_t ch, std::wstring& committed) {
   if (!waitDateOrAmount_)
     return EngineAction::None;
   if (ch == L';') {
@@ -215,8 +214,8 @@ EngineAction JidaEngine::OnSemicolonTail(wchar_t ch,
 }
 
 bool JidaEngine::OnPunctuation(wchar_t ch,
-                                 std::wstring& punct,
-                                 std::wstring& firstCand) {
+                               std::wstring& punct,
+                               std::wstring& firstCand) {
   if (!g_config.punctuationTop || buffer_.empty())
     return false;
   for (auto& p : g_punctMap) {
@@ -246,13 +245,10 @@ void JidaEngine::OnBackspace() {
 }
 
 bool JidaEngine::OnEnter(std::wstring& committed) {
-  if (buffer_.empty() || waitDateOrAmount_)
+  // 极点的回车 = 取消当前输入，不上屏任何文字
+  (void)committed;
+  if (buffer_.empty() && !waitDateOrAmount_)
     return false;
-  if (!candidates_.empty())
-    committed = candidates_.front().text;
-  else
-    committed = buffer_;
-  CommitText(committed);
   Reset();
-  return true;
+  return false;  // 返回 false 表示"没有文字需要提交"
 }
