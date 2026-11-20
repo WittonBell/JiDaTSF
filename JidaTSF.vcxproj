@@ -24,7 +24,7 @@
     <RootNamespace>JidianTSF</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectName>JidaTSF</ProjectName>
+    <ProjectName>JiDaTSF</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
@@ -44,7 +44,7 @@
   <PropertyGroup>
     <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)obj\$(Platform)\$(Configuration)\</IntDir>
-    <TargetName>JidaTSF</TargetName>
+    <TargetName>JiDaTSF</TargetName>
     <LinkIncremental Condition="'$(Configuration)'=='Debug'">true</LinkIncremental>
     <LinkIncremental Condition="'$(Configuration)'=='Release'">false</LinkIncremental>
     <GenerateManifest>true</GenerateManifest>
@@ -67,7 +67,7 @@
       <AdditionalDependencies>shcore.lib;ole32.lib;oleaut32.lib;advapi32.lib;user32.lib;gdi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalManifestFiles>JidianTSF.manifest</AdditionalManifestFiles>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <ImportLibrary>$(IntDir)JidaTSF.lib</ImportLibrary>
+      <ImportLibrary>$(IntDir)JiDaTSF.lib</ImportLibrary>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)</AdditionalIncludeDirectories>
@@ -79,8 +79,8 @@
     <ClCompile Include="Globals.cpp" />
     <ClCompile Include="Server.cpp" />
     <ClCompile Include="Register.cpp" />
-    <ClCompile Include="JidaEngine.cpp" />
-    <ClCompile Include="JidaTextService.cpp" />
+    <ClCompile Include="JiDaEngine.cpp" />
+    <ClCompile Include="JiDaTextService.cpp" />
     <ClCompile Include="CandidateWindow.cpp" />
     <ClCompile Include="DpiHelper.cpp" />
     <ClCompile Include="StatusWindow.cpp" />
@@ -88,19 +88,19 @@
   <ItemGroup>
     <ClInclude Include="Globals.h" />
     <ClInclude Include="EditSessions.h" />
-    <ClInclude Include="JidaEngine.h" />
-    <ClInclude Include="JidaTextService.h" />
+    <ClInclude Include="JiDaEngine.h" />
+    <ClInclude Include="JiDaTextService.h" />
     <ClInclude Include="CandidateWindow.h" />
     <ClInclude Include="DpiHelper.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="StatusWindow.h" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="JidaTSF.rc" />
+    <ResourceCompile Include="JiDaTSF.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="JidaTSF.def" />
-    <None Include="JidaTSF.manifest" />
+    <None Include="JiDaTSF.def" />
+    <None Include="JiDaTSF.manifest" />
     <None Include="data\jidian_wubi86.txt" />
     <None Include="README.md" />
   </ItemGroup>

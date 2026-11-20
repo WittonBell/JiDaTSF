@@ -191,7 +191,9 @@ LRESULT CCandidateWindow::_OnPaint() {
   HDC mem = CreateCompatibleDC(hdc);
   HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
   HGDIOBJ oldB = SelectObject(mem, bmp);
-  FillRect(mem, &rc, (HBRUSH)(COLOR_WINDOW + 1));
+  // 设置背景色
+  HBRUSH hBrush = CreateSolidBrush(RGB(251,255,247));
+  FillRect(mem, &rc, hBrush);
   SetBkMode(mem, TRANSPARENT);
   HGDIOBJ oldF = SelectObject(mem, _font);
 
@@ -257,6 +259,7 @@ LRESULT CCandidateWindow::_OnPaint() {
   SelectObject(mem, oldB);
   DeleteObject(bmp);
   DeleteDC(mem);
+  DeleteObject(hBrush);
   EndPaint(_hwnd, &ps);
   return 0;
 }
