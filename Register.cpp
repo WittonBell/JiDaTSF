@@ -1,80 +1,230 @@
-#include <comdef.h>
+// Register.cpp
+#include <aclapi.h>
 #include <msctf.h>
+#include <sddl.h>
+#include <shlwapi.h>
+#include <string>
 #include "Globals.h"
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "advapi32.lib")
-#pragma comment(lib, "oleaut32.lib")
 
-static const LANGID kLangId = 0x0804;
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "oleaut32.lib")
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "shlwapi.lib")
+
+static const LANGID kLangId = 0x0804;  // 简体中文
 static const wchar_t kDesc[] = L"极达五笔";
 
-static HRESULT RegisterCom(wchar_t* clsidStr, const wchar_t* dllPath) {
-  HKEY k;
-  std::wstring sub = std::wstring(L"CLSID\\") + clsidStr;
-  if (RegCreateKeyExW(HKEY_CLASSES_ROOT, sub.c_str(), 0, nullptr, 0, KEY_WRITE,
-                      nullptr, &k, nullptr) != ERROR_SUCCESS)
-    return E_FAIL;
-  RegSetValueExW(k, nullptr, 0, REG_SZ, (const BYTE*)L"JidaTSF",
-                 (DWORD)((wcslen(L"JidaTSF") + 1) * sizeof(wchar_t)));
-  RegCloseKey(k);
+STDAPI DllUnregisterServer();
 
-  sub = std::wstring(L"CLSID\\") + clsidStr + L"\\InprocServer32";
-  if (RegCreateKeyExW(HKEY_CLASSES_ROOT, sub.c_str(), 0, nullptr, 0, KEY_WRITE,
-                      nullptr, &k, nullptr) != ERROR_SUCCESS)
+    // ------------------------------------------------------------------
+// COM：注册 CLSID\{...}\InprocServer32
+// ------------------------------------------------------------------
+static HRESULT RegisterComServer(const CLSID& clsid, const wchar_t* dllPath) {
+  wchar_t clsidStr[64] = {0};
+  if (!StringFromGUID2(clsid, clsidStr, 64))
     return E_FAIL;
-  RegSetValueExW(k, nullptr, 0, REG_SZ, (const BYTE*)dllPath,
+
+  std::wstring keyClsid =
+      std::wstring(L"Software\\Classes\\CLSID\\") + clsidStr;
+
+  HKEY hKey = nullptr;
+  LONG ret = RegCreateKeyExW(HKEY_LOCAL_MACHINE, keyClsid.c_str(), 0, nullptr,
+                             0, KEY_WRITE, nullptr, &hKey, nullptr);
+  if (ret != ERROR_SUCCESS)
+    return HRESULT_FROM_WIN32(ret);
+
+  RegSetValueExW(hKey, nullptr, 0, REG_SZ, (const BYTE*)kDesc,
+                 (DWORD)((wcslen(kDesc) + 1) * sizeof(wchar_t)));
+  RegCloseKey(hKey);
+
+  std::wstring keyInproc = keyClsid + L"\\InprocServer32";
+  ret = RegCreateKeyExW(HKEY_LOCAL_MACHINE, keyInproc.c_str(), 0, nullptr, 0,
+                        KEY_WRITE, nullptr, &hKey, nullptr);
+  if (ret != ERROR_SUCCESS)
+    return HRESULT_FROM_WIN32(ret);
+
+  RegSetValueExW(hKey, nullptr, 0, REG_SZ, (const BYTE*)dllPath,
                  (DWORD)((wcslen(dllPath) + 1) * sizeof(wchar_t)));
-  RegSetValueExW(k, L"ThreadingModel", 0, REG_SZ, (const BYTE*)L"Apartment",
+  RegSetValueExW(hKey, L"ThreadingModel", 0, REG_SZ, (const BYTE*)L"Apartment",
                  (DWORD)(sizeof(L"Apartment")));
-  RegCloseKey(k);
+  RegCloseKey(hKey);
+
   return S_OK;
 }
 
-STDAPI DllRegisterServer() {
-  wchar_t dll[MAX_PATH];
-  GetModuleFileNameW(g_hInstance, dll, MAX_PATH);
-  wchar_t clsidStr[64];
-  StringFromGUID2(CLSID_JidaTSF, clsidStr, 64);
-  if (FAILED(RegisterCom(clsidStr, dll)))
-    return E_FAIL;
+// ------------------------------------------------------------------
+// 授予 AppContainer 读权限（S-1-15-2-1 / S-1-15-2-2），使 UWP 可加载
+// ------------------------------------------------------------------
+static HRESULT GrantAppContainerReadAccess(const wchar_t* path) {
+  if (!path || !*path)
+    return E_INVALIDARG;
 
-  ITfInputProcessorProfiles* profiles = nullptr;
-  HRESULT hr = CoCreateInstance(
-      CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-      IID_ITfInputProcessorProfiles, (void**)&profiles);
+  PSID pAllAppPkgs = nullptr;
+  PSID pRestrictedAppPkgs = nullptr;
+  if (!ConvertStringSidToSidW(L"S-1-15-2-1", &pAllAppPkgs))
+    return HRESULT_FROM_WIN32(GetLastError());
+  if (!ConvertStringSidToSidW(L"S-1-15-2-2", &pRestrictedAppPkgs)) {
+    LocalFree(pAllAppPkgs);
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+
+  PACL pOldDacl = nullptr;
+  PSECURITY_DESCRIPTOR pSD = nullptr;
+  DWORD dwRes =
+      GetNamedSecurityInfoW(path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                            nullptr, nullptr, &pOldDacl, nullptr, &pSD);
+  if (dwRes != ERROR_SUCCESS) {
+    LocalFree(pAllAppPkgs);
+    LocalFree(pRestrictedAppPkgs);
+    return HRESULT_FROM_WIN32(dwRes);
+  }
+
+  EXPLICIT_ACCESSW ea[2] = {};
+  ea[0].grfAccessPermissions = GENERIC_READ | GENERIC_EXECUTE;
+  ea[0].grfAccessMode = GRANT_ACCESS;
+  ea[0].grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+  ea[0].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+  ea[0].Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+  ea[0].Trustee.ptstrName = (LPWSTR)pAllAppPkgs;
+
+  ea[1] = ea[0];
+  ea[1].Trustee.ptstrName = (LPWSTR)pRestrictedAppPkgs;
+
+  PACL pNewDacl = nullptr;
+  dwRes = SetEntriesInAclW(2, ea, pOldDacl, &pNewDacl);
+
+  LocalFree(pAllAppPkgs);
+  LocalFree(pRestrictedAppPkgs);
+
+  if (dwRes != ERROR_SUCCESS) {
+    if (pSD)
+      LocalFree(pSD);
+    return HRESULT_FROM_WIN32(dwRes);
+  }
+
+  dwRes = SetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
+                                DACL_SECURITY_INFORMATION, nullptr, nullptr,
+                                pNewDacl, nullptr);
+
+  if (pNewDacl)
+    LocalFree(pNewDacl);
+  if (pSD)
+    LocalFree(pSD);
+
+  return (dwRes == ERROR_SUCCESS) ? S_OK : HRESULT_FROM_WIN32(dwRes);
+}
+
+// ------------------------------------------------------------------
+// DllRegisterServer
+// ------------------------------------------------------------------
+STDAPI DllRegisterServer() {
+  HRESULT hr = S_OK;
+
+  wchar_t dllPath[MAX_PATH] = {0};
+  if (!GetModuleFileNameW(g_hInstance, dllPath, MAX_PATH))
+    return HRESULT_FROM_WIN32(GetLastError());
+
+  hr = RegisterComServer(CLSID_JidaTSF, dllPath);
   if (FAILED(hr))
     return hr;
-  profiles->Register(CLSID_JidaTSF);
-  profiles->AddLanguageProfile(CLSID_JidaTSF, kLangId, GUID_LBI, kDesc,
-                               (ULONG)wcslen(kDesc), dll, (ULONG)wcslen(dll),
-                               0);
-  profiles->Release();
 
-  ITfCategoryMgr* cat = nullptr;
-  hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
-                        IID_ITfCategoryMgr, (void**)&cat);
-  if (SUCCEEDED(hr)) {
-    cat->RegisterCategory(CLSID_JidaTSF, GUID_TFCAT_TIP_KEYBOARD,
-                          CLSID_JidaTSF);
-    cat->RegisterCategory(CLSID_JidaTSF, GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
-                          CLSID_JidaTSF);
-    cat->Release();
+  HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  bool bNeedCoUninit = SUCCEEDED(hrCo);
+
+  ITfInputProcessorProfileMgr* pProfileMgr = nullptr;
+  hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                        CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfileMgr,
+                        (void**)&pProfileMgr);
+  if (SUCCEEDED(hr) && pProfileMgr) {
+    hr = pProfileMgr->RegisterProfile(
+        CLSID_JidaTSF,                  // rclsid
+        kLangId,                          // langid
+        GUID_LBI,                         // guidProfile
+        kDesc, (ULONG)wcslen(kDesc),      // 描述字符串
+        dllPath, (ULONG)wcslen(dllPath),  // 图标文件
+        0,                                // uIconIndex
+        nullptr,  // hklsubstitute = NULL（关键：非键盘布局）
+        0,        // dwPreferredLayout（必须为 0）
+        FALSE,    // bEnabledByDefault
+        0         // dwFlags
+    );
+    pProfileMgr->Release();
+    pProfileMgr = nullptr;
   }
-  return S_OK;
+
+  if (SUCCEEDED(hr)) {
+    ITfCategoryMgr* pCategoryMgr = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
+                                   CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
+                                   (void**)&pCategoryMgr))) {
+      pCategoryMgr->RegisterCategory(CLSID_JidaTSF, GUID_TFCAT_TIP_KEYBOARD,
+                                     CLSID_JidaTSF);
+      pCategoryMgr->RegisterCategory(
+          CLSID_JidaTSF, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_JidaTSF);
+      pCategoryMgr->RegisterCategory(
+          CLSID_JidaTSF, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_JidaTSF);
+      pCategoryMgr->RegisterCategory(
+          CLSID_JidaTSF, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_JidaTSF);
+      pCategoryMgr->Release();
+    }
+  }
+
+  if (SUCCEEDED(hr)) {
+    std::wstring dir(dllPath);
+    size_t p = dir.find_last_of(L"\\/");
+    if (p != std::wstring::npos)
+      dir.resize(p);
+
+    GrantAppContainerReadAccess(dir.c_str());
+    GrantAppContainerReadAccess((dir + L"\\data").c_str());
+  }
+
+  if (bNeedCoUninit)
+    CoUninitialize();
+
+  if (FAILED(hr)) {
+    DllUnregisterServer();
+  }
+  return hr;
 }
 
+// ------------------------------------------------------------------
+// DllUnregisterServer
+// ------------------------------------------------------------------
 STDAPI DllUnregisterServer() {
-  ITfInputProcessorProfiles* profiles = nullptr;
+  HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  bool bNeedCoUninit = SUCCEEDED(hrCo);
+
+  ITfInputProcessorProfileMgr* pProfileMgr = nullptr;
   if (SUCCEEDED(CoCreateInstance(
           CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-          IID_ITfInputProcessorProfiles, (void**)&profiles))) {
-    profiles->RemoveLanguageProfile(CLSID_JidaTSF, kLangId, GUID_LBI);
-    profiles->Unregister(CLSID_JidaTSF);
-    profiles->Release();
+          IID_ITfInputProcessorProfileMgr, (void**)&pProfileMgr))) {
+    pProfileMgr->UnregisterProfile(CLSID_JidaTSF, kLangId, GUID_LBI, 0);
+    pProfileMgr->Release();
   }
-  wchar_t clsidStr[64];
-  StringFromGUID2(CLSID_JidaTSF, clsidStr, 64);
-  std::wstring sub = std::wstring(L"CLSID\\") + clsidStr;
-  RegDeleteTreeW(HKEY_CLASSES_ROOT, sub.c_str());
+
+  ITfCategoryMgr* pCategoryMgr = nullptr;
+  if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
+                                 CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
+                                 (void**)&pCategoryMgr))) {
+    pCategoryMgr->UnregisterCategory(CLSID_JidaTSF, GUID_TFCAT_TIP_KEYBOARD,
+                                     CLSID_JidaTSF);
+    pCategoryMgr->UnregisterCategory(
+        CLSID_JidaTSF, GUID_TFCAT_TIPCAP_UIELEMENTENABLED, CLSID_JidaTSF);
+    pCategoryMgr->UnregisterCategory(
+        CLSID_JidaTSF, GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_JidaTSF);
+    pCategoryMgr->UnregisterCategory(
+        CLSID_JidaTSF, GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_JidaTSF);
+    pCategoryMgr->Release();
+  }
+
+  wchar_t clsidStr[64] = {0};
+  if (StringFromGUID2(CLSID_JidaTSF, clsidStr, 64)) {
+    std::wstring sub = std::wstring(L"Software\\Classes\\CLSID\\") + clsidStr;
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE, sub.c_str());
+  }
+
+  if (bNeedCoUninit)
+    CoUninitialize();
   return S_OK;
 }

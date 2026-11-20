@@ -149,6 +149,14 @@ if (-not $SkipDataCopy) {
     }
 }
 
+$dllDir = Split-Path $dllPath
+
+# 给 ALL APPLICATION PACKAGES (S-1-15-2-1) 授予读取和执行权限
+icacls $dllDir /grant "*S-1-15-2-1:(OI)(CI)RX"
+
+# 给 RESTRICTED APPLICATION PACKAGES (S-1-15-2-2) 授予读取和执行权限
+icacls $dllDir /grant "*S-1-15-2-2:(OI)(CI)RX"
+
 # --------------------------- 自检 ---------------------------
 
 $clsidStr = '{7A3E8F1C-4B2D-4E5F-9C8A-1B6D3E7F2A5C}'
