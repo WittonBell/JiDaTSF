@@ -112,42 +112,74 @@ void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
 }
 
 void CCandidateWindow::_UpdateSize() {
+  if (!_hwnd)
+    return;
+
   int titleH = _title.empty() ? 0 : (_rowHeight + MulDiv(6, _dpi, 96));
   int pageEnd = (std::min)(_pageStart + kPageSize, (int)_items.size());
   int visible = pageEnd - _pageStart;
   if (visible < 0)
     visible = 0;
 
-  int w, h;
+  // 用当前字体精确测量像素宽度
+  HDC dc = GetDC(_hwnd);
+  HGDIOBJ oldFont =
+      SelectObject(dc, _font ? _font : GetStockObject(DEFAULT_GUI_FONT));
+
+  // 空格宽度作为候选间距（极点风格：仅一个英文空格宽）
+  SIZE spaceSz = {0, 0};
+  GetTextExtentPoint32W(dc, L" ", 1, &spaceSz);
+  _cellGap =
+      (std::max)((int)spaceSz.cx, MulDiv(4, _dpi, 96));  // 防止字体异常时贴太紧
+
+  // 标题实际宽度
+  int titleW = 0;
+  if (!_title.empty()) {
+    SIZE tsz = {0, 0};
+    GetTextExtentPoint32W(dc, _title.c_str(), (int)_title.size(), &tsz);
+    titleW = (int)tsz.cx;
+  }
+
+  int w = 0, h = 0;
+
   if (IsVertical()) {
-    int maxChars = (int)_title.size() + 2;
-    for (int i = _pageStart; i < pageEnd; ++i)
-      maxChars = (std::max)(maxChars, (int)_items[i].text.size() + 3);
-    w = MulDiv(maxChars * 18, _dpi, 96) + _padding * 2;
+    _cellWidths.clear();
+    int maxLineW = 0;
+    for (int i = _pageStart; i < pageEnd; ++i) {
+      std::wstring line =
+          std::to_wstring(i - _pageStart + 1) + L". " + _items[i].text;
+      SIZE sz = {0, 0};
+      GetTextExtentPoint32W(dc, line.c_str(), (int)line.size(), &sz);
+      maxLineW = (std::max)(maxLineW, (int)sz.cx);
+    }
+    w = (std::max)(maxLineW, titleW) + _padding * 2;
     if (visible < 1)
       visible = 1;
     h = titleH + _rowHeight * visible + _padding * 2;
   } else {
-    // 横向：按当前页最长候选动态计算每格宽度，与实际绘制保持一致
-    int n = (visible < 1) ? 1 : visible;
+    // 横向：逐项精确测量，紧凑排列
+    _cellWidths.clear();
+    _cellWidths.reserve(visible);
 
-    int maxCellChars = 3;  // 至少容纳 "N.字"
+    int totalCellW = 0;
     for (int i = _pageStart; i < pageEnd; ++i) {
-      int len = (int)_items[i].text.size() + 2;  // "N." 前缀
-      maxCellChars = (std::max)(maxCellChars, len);
+      std::wstring line =
+          std::to_wstring(i - _pageStart + 1) + L"." + _items[i].text;
+      SIZE sz = {0, 0};
+      GetTextExtentPoint32W(dc, line.c_str(), (int)line.size(), &sz);
+      _cellWidths.push_back((int)sz.cx);
+      totalCellW += (int)sz.cx;
     }
-    // 18px/字符估算，下限 60px 避免单字时格子过窄
-    _cellWidth =
-        (std::max)(MulDiv(maxCellChars * 18, _dpi, 96), MulDiv(60, _dpi, 96));
 
-    int gridWidth = _cellWidth * n;
-    int titleWidth =
-        _title.empty() ? 0 : MulDiv(((int)_title.size() + 2) * 18, _dpi, 96);
+    int n = (int)_cellWidths.size();
+    int gridW = totalCellW + _cellGap * (std::max)(0, n - 1);
 
-    // 窗口宽度 = max(格子总宽, 标题宽) + 左右内边距
-    w = (std::max)(gridWidth, titleWidth) + _padding * 2;
+    w = (std::max)(gridW, titleW) + _padding * 2;
     h = titleH + _rowHeight + _padding * 2;
   }
+
+  SelectObject(dc, oldFont);
+  ReleaseDC(_hwnd, dc);
 
   SetWindowPos(_hwnd, nullptr, 0, 0, w, h,
                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -237,20 +269,23 @@ LRESULT CCandidateWindow::_OnPaint() {
       y += _rowHeight;
     }
   } else {
-    // 横向：每格 _cellWidth 宽
+    // 横向：每个候选按自身实测宽度紧凑排列，中间只隔 _cellGap
     int x = _padding;
     for (int i = _pageStart; i < pageEnd; ++i) {
       int local = i - _pageStart;
+      int cw =
+          (local < (int)_cellWidths.size()) ? _cellWidths[local] : _rowHeight;
       std::wstring line = std::to_wstring(local + 1) + L"." + _items[i].text;
-      RECT cell = {x, y, x + _cellWidth, y + _rowHeight};
+      RECT cell = {x, y, x + cw, y + _rowHeight};
       if (i == _selected) {
         FillRect(mem, &cell, (HBRUSH)(COLOR_HIGHLIGHT + 1));
         SetTextColor(mem, GetSysColor(COLOR_HIGHLIGHTTEXT));
-      } else
+      } else {
         SetTextColor(mem, GetSysColor(COLOR_WINDOWTEXT));
+      }
       DrawTextW(mem, line.c_str(), (int)line.size(), &cell,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-      x += _cellWidth;
+      x += cw + _cellGap;
     }
   }
 
@@ -277,10 +312,14 @@ int CCandidateWindow::_HitTest(int mx, int my) const {
     int y0 = _padding + titleH;
     if (my < y0 || my >= y0 + _rowHeight)
       return -1;
-    int col = (mx - _padding) / _cellWidth;
-    if (col < 0 || col >= pageEnd - _pageStart)
-      return -1;
-    return _pageStart + col;
+    int x = _padding;
+    for (int local = 0; local < (int)_cellWidths.size(); ++local) {
+      int cw = _cellWidths[local];
+      if (mx >= x && mx < x + cw)
+        return _pageStart + local;
+      x += cw + _cellGap;
+    }
+    return -1;
   }
 }
 
@@ -315,6 +354,7 @@ LRESULT CCandidateWindow::_OnMouseWheel(WPARAM w) {
       _pageStart += kPageSize;
   }
   _selected = _pageStart;
+  _UpdateSize();  // 关键：刷新 _cellWidths 与窗口宽
   InvalidateRect(_hwnd, nullptr, TRUE);
   return 0;
 }

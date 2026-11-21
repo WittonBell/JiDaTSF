@@ -42,8 +42,9 @@ class CCandidateWindow {
   HFONT _font = nullptr;
   int _rowHeight = 0;
   int _padding = 0;
-  int _cellWidth = 0;  // 横向布局单格宽度
-  int _maxWidth = 0;
+  // 横向布局：每个候选的精确像素宽度（下标 = i - _pageStart）
+  std::vector<int> _cellWidths;
+  int _cellGap = 0;  // 候选之间的间距（= 一个空格宽度）
 
   int _lastX = -1, _lastY = -1, _lastW = -1, _lastH = -1;
 
