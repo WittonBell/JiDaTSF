@@ -41,8 +41,6 @@ class JiDaEngine {
   bool IsWaitingDateOrAmount() const { return waitDateOrAmount_; }
   void SetStatus(InputStatus status) { _inputStatus = status; }
 
-  static constexpr int kPageSize = 9;
-
  private:
   void Query(const std::wstring& code);
   void CommitText(const std::wstring& t);

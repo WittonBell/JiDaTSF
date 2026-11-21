@@ -4,6 +4,7 @@
 #include "Globals.h"
 #include "JiDaEngine.h"
 #include "StatusWindow.h"
+#include "Config.h"
 
 class CJiDaTextService : public ITfTextInputProcessor,
                          public ITfKeyEventSink,
@@ -58,6 +59,10 @@ class CJiDaTextService : public ITfTextInputProcessor,
   ITfContext* _activeCtx = nullptr;
 
  private:
-  CStatusWindow _statusWindow;
-  InputStatus _inputStatus;
+  void _OnStatusCommand(StatusCommand cmd);
+  void _OpenSettingsWindow();
+  void _SyncStatusBarVisibility();
+
+  std::unique_ptr<CStatusWindow> _statusWnd;
+  InputStatus _status;
 };

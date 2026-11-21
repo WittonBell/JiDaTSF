@@ -75,6 +75,7 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Config.cpp" />
     <ClCompile Include="DllMain.cpp" />
     <ClCompile Include="Globals.cpp" />
     <ClCompile Include="Server.cpp" />
@@ -83,9 +84,11 @@
     <ClCompile Include="JiDaTextService.cpp" />
     <ClCompile Include="CandidateWindow.cpp" />
     <ClCompile Include="DpiHelper.cpp" />
+    <ClCompile Include="SettingWindow.cpp" />
     <ClCompile Include="StatusWindow.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Config.h" />
     <ClInclude Include="Globals.h" />
     <ClInclude Include="EditSessions.h" />
     <ClInclude Include="JiDaEngine.h" />
@@ -93,6 +96,7 @@
     <ClInclude Include="CandidateWindow.h" />
     <ClInclude Include="DpiHelper.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="SettingWindow.h" />
     <ClInclude Include="StatusWindow.h" />
   </ItemGroup>
   <ItemGroup>

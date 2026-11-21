@@ -18,6 +18,7 @@ class CCandidateWindow {
             UINT dpi);
   void Hide();
   void SetTitle(const std::wstring& t) { _title = t; }
+  void RefreshFromConfig();
 
  private:
   static LRESULT CALLBACK _WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -47,6 +48,4 @@ class CCandidateWindow {
   int _cellGap = 0;  // 候选之间的间距（= 一个空格宽度）
 
   int _lastX = -1, _lastY = -1, _lastW = -1, _lastH = -1;
-
-  static constexpr int kPageSize = 9;
 };

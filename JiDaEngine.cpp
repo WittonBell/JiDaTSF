@@ -22,7 +22,7 @@ void JiDaEngine::ClampSelection() {
     selected_ = 0;
     return;
   }
-  int pageEnd = (std::min)(pageStart_ + kPageSize, (int)candidates_.size());
+  int pageEnd = (std::min)(pageStart_ + CandPageSize(), (int)candidates_.size());
   if (selected_ < pageStart_)
     selected_ = pageStart_;
   if (selected_ >= pageEnd)
@@ -182,15 +182,15 @@ bool JiDaEngine::OnSpace(std::wstring& committed) {
 void JiDaEngine::MoveSelection(int delta) {
   if (candidates_.empty())
     return;
-  int pageEnd = (std::min)(pageStart_ + kPageSize, (int)candidates_.size());
+  int pageEnd = (std::min)(pageStart_ + CandPageSize(), (int)candidates_.size());
   int next = selected_ + delta;
   if (next < pageStart_) {
     // 上一页最后一项
     if (pageStart_ > 0) {
-      pageStart_ -= kPageSize;
+      pageStart_ -= CandPageSize();
       if (pageStart_ < 0)
         pageStart_ = 0;
-      pageEnd = (std::min)(pageStart_ + kPageSize, (int)candidates_.size());
+      pageEnd = (std::min)(pageStart_ + CandPageSize(), (int)candidates_.size());
       selected_ = pageEnd - 1;
     }
     return;
@@ -198,7 +198,7 @@ void JiDaEngine::MoveSelection(int delta) {
   if (next >= pageEnd) {
     // 下一页第一项
     if (pageEnd < (int)candidates_.size()) {
-      pageStart_ += kPageSize;
+      pageStart_ += CandPageSize();
       selected_ = pageStart_;
     }
     return;
@@ -210,13 +210,13 @@ void JiDaEngine::MovePage(int dir) {
   if (candidates_.empty())
     return;
   if (dir < 0) {
-    if (pageStart_ >= kPageSize)
-      pageStart_ -= kPageSize;
+    if (pageStart_ >= CandPageSize())
+      pageStart_ -= CandPageSize();
     else
       pageStart_ = 0;
   } else {
-    if (pageStart_ + kPageSize < (int)candidates_.size())
-      pageStart_ += kPageSize;
+    if (pageStart_ + CandPageSize()< (int)candidates_.size())
+      pageStart_ += CandPageSize();
   }
   selected_ = pageStart_;
   ClampSelection();

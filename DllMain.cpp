@@ -1,11 +1,14 @@
 #include "DpiHelper.h"
 #include "Globals.h"
+#include "Config.h"
 
 BOOL APIENTRY DllMain(HMODULE h, DWORD r, LPVOID) {
   if (r == DLL_PROCESS_ATTACH) {
     g_hInstance = h;
     DisableThreadLibraryCalls(h);
     EnablePerMonitorV2();
+    LoadJiDaConfig();  // ← 新增：先读配置，再加载码表
+
     wchar_t buf[MAX_PATH];
     GetModuleFileNameW(h, buf, MAX_PATH);
     std::wstring dir(buf);

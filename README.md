@@ -134,19 +134,24 @@ JidaTSF/bin/x64/Release/data/jidian_wubi86.txt
 配置位于 `Globals.h` 中的 `JidaConfig` 结构体：
 
 ```cpp
-struct JidaConfig {
-    bool autoCommitUnique = true;   // 四码唯一自动上屏
-    bool zRepeat          = true;   // Z 重复上次上屏
-    bool zWildcard        = true;   // Z 通配
-    bool semicolonSecond  = true;   // 分号选第二重码
-    bool punctuationTop   = true;   // 标点顶屏
-    bool perKeyHint       = true;   // 逐键提示
-    bool gbkExt           = true;   // GBK 生僻字
-    wchar_t wildcardChar  = L'z';   // 通配符字符
+struct JiDaConfig {
+   bool autoCommitUnique = true;                    // 四码唯一自动上屏
+  bool zRepeat = true;                             // Z 重复上次上屏
+  bool zWildcard = true;                           // Z 通配
+  bool semicolonSecond = true;                     // 分号选第二重码
+  bool punctuationTop = true;                      // 标点顶屏
+  bool perKeyHint = true;                          // 逐键提示
+  bool gbkExt = true;                              // GBK 生僻字
+  wchar_t wildcardChar = L'z';                     // 通配符字符
+  bool inlinePreedit = false;                      // 嵌入预编辑
+  bool showStatusBar = true;                       // 是否显示状态栏
+  int candPageSize = 9;                            // 候选框中每页的条目数
+  int candFontSize = 14;                           // 候选框中的字体大小
+  CandLayout candLayout = CandLayout::Horizontal;  // 候选框选项排列方式
 };
 ```
 
-当前版本通过修改源码 + 重新编译生效。后续可在 `%APPDATA%\JidaTSF\config.ini` 中持久化。
+当前版本通过修改源码 + 重新编译生效。后续可在 `%APPDATA%\JiDaTSF\config.ini` 中持久化。
 
 ---
 
@@ -171,11 +176,11 @@ struct JidaConfig {
 ```
 按键
   ↓
-CJidaTextService::OnKeyDown
+CJiDaTextService::OnKeyDown
   ↓
-JidaEngine::OnXxx  →  返回 EngineAction
+JiDaEngine::OnXxx  →  返回 EngineAction
   ↓
-CJidaTextService::_HandleLetterResult
+CJiDaTextService::_HandleLetterResult
   ↓
 CStartCompositionSession   （首次按键）
 CUpdateCompositionSession  （后续按键）
@@ -186,9 +191,9 @@ CCandidateWindow::Show
 
 ### 关键文件职责
 
-- **`JidaEngine`**：纯输入逻辑，不依赖 TSF，可单元测试
+- **`JiDaEngine`**：纯输入逻辑，不依赖 TSF，可单元测试
 - **`EditSessions.h`**：所有 TSF 编辑操作都通过 `ITfEditSession` 完成
-- **`CJidaTextService`**：按键路由 + 协调引擎与 TSF
+- **`CJiDaTextService`**：按键路由 + 协调引擎与 TSF
 - **`CCandidateWindow`**：独立的弹出窗口，不做编辑
 
 ### 扩展点

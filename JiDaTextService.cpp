@@ -3,6 +3,7 @@
 #include <cwctype>
 #include "DpiHelper.h"
 #include "EditSessions.h"
+#include "SettingWindow.h"
 
 static wchar_t VkToChar(WPARAM vk, LPARAM lParam) {
   BYTE ks[256];
@@ -47,28 +48,53 @@ STDMETHODIMP_(ULONG) CJiDaTextService::Release() {
 }
 
 STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
+  if (!ptim)
+    return E_INVALIDARG;
+  if (_threadMgr)
+    return S_OK;  // 防止重复 Activate
+
   _threadMgr = ptim;
   _threadMgr->AddRef();
   _clientId = tid;
+
   EnablePerMonitorV2();
 
+  wchar_t buf[128];
+  swprintf_s(buf, L"[JiDa] Activate tid=%u\n", (unsigned)_clientId);
+  OutputDebugStringW(buf);
+
+  // ---------------- 1. 按键事件 sink ----------------
   ITfKeystrokeMgr* keyMgr = nullptr;
   if (SUCCEEDED(
           _threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&keyMgr))) {
     keyMgr->AdviseKeyEventSink(_clientId, static_cast<ITfKeyEventSink*>(this),
                                TRUE);
     keyMgr->Release();
+  } else {
+    OutputDebugStringW(L"[JiDa] Activate: QI ITfKeystrokeMgr FAILED\n");
   }
+
+  // ---------------- 2. 线程事件 sink（必须走 ITfSource） ----------------
   ITfSource* source = nullptr;
   if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfSource, (void**)&source))) {
-    source->AdviseSink(IID_ITfThreadMgrEventSink,
-                       static_cast<ITfThreadMgrEventSink*>(this), &_sinkCookie);
+    HRESULT hrSink = source->AdviseSink(
+        IID_ITfThreadMgrEventSink, static_cast<ITfThreadMgrEventSink*>(this),
+        &_sinkCookie);
+    if (FAILED(hrSink)) {
+      OutputDebugStringW(L"[JiDa] Activate: AdviseSink FAILED\n");
+      _sinkCookie = TF_INVALID_COOKIE;
+    }
     source->Release();
   }
 
+  // ---------------- 3. 候选窗口 ----------------
   _candWnd = std::make_unique<CCandidateWindow>();
-  _candWnd->Create(g_hInstance);
-  // 鼠标点击候选：选中该候选并提交
+  if (!_candWnd->Create(g_hInstance)) {
+    OutputDebugStringW(L"[JiDa] Activate: candidate window create FAILED\n");
+    // 候选窗口失败不致命，继续尝试
+  }
+
+  // 鼠标点选候选：提交该项并清空编码
   _candWnd->OnPick = [this](int idx) {
     if (!_activeCtx)
       return;
@@ -79,45 +105,39 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     _engine.Reset();
     _HideCandidates();
   };
-  _statusWindow.Create(
-      g_hInstance,  // TSF DLL 的 HINSTANCE
-      nullptr, L"极达五笔", _inputStatus, [this](StatusCommand cmd) {
-        switch (cmd) {
-          case StatusCommand::ToggleChinese:
-            _inputStatus.chinese = !_inputStatus.chinese;
-            break;
 
-          case StatusCommand::ToggleFullShape:
-            _inputStatus.fullShape = !_inputStatus.fullShape;
-            break;
+  // ---------------- 4. 状态栏 ----------------
+  _status = InputStatus{};
+  _statusWnd = std::make_unique<CStatusWindow>();
 
-          case StatusCommand::TogglePunctuation:
-            _inputStatus.chinesePunctuation = !_inputStatus.chinesePunctuation;
-            break;
+  bool statusCreated =
+      _statusWnd->Create(g_hInstance, nullptr, L"极达", _status,
+                         [this](StatusCommand cmd) { _OnStatusCommand(cmd); });
 
-          case StatusCommand::ToggleTraditional:
-            _inputStatus.traditional = !_inputStatus.traditional;
-            break;
+  if (!statusCreated) {
+    OutputDebugStringW(L"[JiDa] Activate: status window create FAILED\n");
+    _statusWnd.reset();
+  } else {
+    OutputDebugStringW(L"[JiDa] Activate: status window created OK\n");
+    // Create 内部已经显示。
+    // 如果配置为隐藏（用户主动关闭过），才在这里藏起来
+    if (!g_config.showStatusBar)
+      _statusWnd->Hide();
+  }
 
-          case StatusCommand::OpenSettings:
-            // 打开设置窗口
-            break;
+  // ---------------- 5. 初始化引擎状态 ----------------
+  _engine.Reset();
+  if (_activeCtx) {
+    _activeCtx->Release();
+    _activeCtx = nullptr;
+  }
 
-          case StatusCommand::HideStatusWindow:
-            _statusWindow.Hide();
-            return;
-        }
-
-        // 同步到输入引擎
-        _engine.SetStatus(_inputStatus);
-
-        _statusWindow.UpdateStatus(_inputStatus);
-      });
   return S_OK;
 }
 
 STDMETHODIMP CJiDaTextService::Deactivate() {
   _Cancel();
+
   if (_threadMgr) {
     ITfKeystrokeMgr* keyMgr = nullptr;
     if (SUCCEEDED(
@@ -125,6 +145,7 @@ STDMETHODIMP CJiDaTextService::Deactivate() {
       keyMgr->UnadviseKeyEventSink(_clientId);
       keyMgr->Release();
     }
+
     if (_sinkCookie != TF_INVALID_COOKIE) {
       ITfSource* source = nullptr;
       if (SUCCEEDED(
@@ -134,16 +155,25 @@ STDMETHODIMP CJiDaTextService::Deactivate() {
       }
       _sinkCookie = TF_INVALID_COOKIE;
     }
+
     _threadMgr->Release();
     _threadMgr = nullptr;
   }
-  if (_candWnd)
+
+  if (_candWnd) {
     _candWnd->Destroy();
+    _candWnd.reset();
+  }
+  if (_statusWnd) {
+    _statusWnd->Destroy();
+    _statusWnd.reset();
+  }
+
   if (_activeCtx) {
     _activeCtx->Release();
     _activeCtx = nullptr;
   }
-  _statusWindow.Destroy();
+
   return S_OK;
 }
 
@@ -156,6 +186,10 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
                                              LPARAM,
                                              BOOL* pfEaten) {
   *pfEaten = FALSE;
+  // 英文模式：任何按键都交给宿主处理
+  if (!_status.chinese)
+    return S_OK;
+
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift && wParam >= 'A' && wParam <= 'Z')
     return S_OK;
@@ -215,6 +249,9 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
                                          LPARAM lParam,
                                          BOOL* pfEaten) {
   *pfEaten = FALSE;
+  if (!_status.chinese)
+    return S_OK;
+
   if (_activeCtx) {
     _activeCtx->Release();
     _activeCtx = nullptr;
@@ -586,4 +623,63 @@ STDMETHODIMP CJiDaTextService::OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) {
     _activeCtx = nullptr;
   }
   return S_OK;
+}
+
+void CJiDaTextService::_OnStatusCommand(StatusCommand cmd) {
+  switch (cmd) {
+    case StatusCommand::ToggleChinese:
+      _status.chinese = !_status.chinese;
+      break;
+    case StatusCommand::ToggleFullShape:
+      _status.fullShape = !_status.fullShape;
+      break;
+    case StatusCommand::TogglePunctuation:
+      _status.chinesePunctuation = !_status.chinesePunctuation;
+      break;
+    case StatusCommand::ToggleTraditional:
+      _status.traditional = !_status.traditional;
+      break;
+    case StatusCommand::OpenSettings:
+      _OpenSettingsWindow();
+      return;
+    case StatusCommand::HideStatusWindow:
+      g_config.showStatusBar = false;
+      SaveJiDaConfig();
+      if (_statusWnd)
+        _statusWnd->Hide();
+      return;
+  }
+  if (_statusWnd)
+    _statusWnd->UpdateStatus(_status);
+}
+
+void CJiDaTextService::_OpenSettingsWindow() {
+  CSettingWindow::Show(g_hInstance,
+                       _statusWnd ? _statusWnd->GetHwnd() : nullptr, [this]() {
+                         // 配置已写入 g_config 并持久化
+                         // 1. 重建候选窗口字体与布局
+                         if (_candWnd)
+                           _candWnd->RefreshFromConfig();
+
+                         // 2. 状态栏可见性
+                         if (_statusWnd) {
+                           if (g_config.showStatusBar)
+                             _statusWnd->Show();
+                           else
+                             _statusWnd->Hide();
+                         }
+
+                         // 3. 丢弃当前编码，下次按键按新配置开始
+                         _Cancel();
+                         _HideCandidates();
+                       });
+}
+
+void CJiDaTextService::_SyncStatusBarVisibility() {
+  if (!_statusWnd)
+    return;
+  if (g_config.showStatusBar)
+    _statusWnd->Show();
+  else
+    _statusWnd->Hide();
 }

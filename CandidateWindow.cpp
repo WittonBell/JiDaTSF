@@ -46,13 +46,12 @@ void CCandidateWindow::Hide() {
 void CCandidateWindow::_RebuildFont() {
   if (_font)
     DeleteObject(_font);
-  _font = CreateFontW(-MulDiv(14, _dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                      CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                      L"Microsoft YaHei");
-  _rowHeight = MulDiv(28, _dpi, 96);
+  _font = CreateFontW(-MulDiv(g_config.candFontSize, _dpi, 96), 0, 0, 0,
+                      FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                      CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
+  _rowHeight = MulDiv(g_config.candFontSize + 14, _dpi, 96);
   _padding = MulDiv(8, _dpi, 96);
-  // _cellWidth 由 _UpdateSize 根据当前页内容动态计算
 }
 
 void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
@@ -72,7 +71,7 @@ void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
   _selected = selected;
 
   // 页起点按选中项自动调整
-  _pageStart = (_selected / kPageSize) * kPageSize;
+  _pageStart = (_selected / CandPageSize()) * CandPageSize();
 
   if (dpi != _dpi) {
     _dpi = dpi;
@@ -116,7 +115,7 @@ void CCandidateWindow::_UpdateSize() {
     return;
 
   int titleH = _title.empty() ? 0 : (_rowHeight + MulDiv(6, _dpi, 96));
-  int pageEnd = (std::min)(_pageStart + kPageSize, (int)_items.size());
+  int pageEnd = (std::min)(_pageStart + CandPageSize(), (int)_items.size());
   int visible = pageEnd - _pageStart;
   if (visible < 0)
     visible = 0;
@@ -247,7 +246,7 @@ LRESULT CCandidateWindow::_OnPaint() {
     y += MulDiv(4, _dpi, 96);
   }
 
-  int pageEnd = (std::min)(_pageStart + kPageSize, (int)_items.size());
+  int pageEnd = (std::min)(_pageStart + CandPageSize(), (int)_items.size());
   if (_items.empty()) {
     RECT hintRc = {_padding, y, rc.right - _padding, y + _rowHeight};
     SetTextColor(mem, RGB(160, 160, 160));
@@ -301,7 +300,7 @@ LRESULT CCandidateWindow::_OnPaint() {
 
 int CCandidateWindow::_HitTest(int mx, int my) const {
   int titleH = _title.empty() ? 0 : (_rowHeight + MulDiv(6, _dpi, 96));
-  int pageEnd = (std::min)(_pageStart + kPageSize, (int)_items.size());
+  int pageEnd = (std::min)(_pageStart + CandPageSize(), (int)_items.size());
   if (IsVertical()) {
     int base = _padding + titleH;
     int row = (my - base) / _rowHeight;
@@ -345,13 +344,13 @@ LRESULT CCandidateWindow::_OnMouseMove(LPARAM l) {
 
 LRESULT CCandidateWindow::_OnMouseWheel(WPARAM w) {
   if (GET_WHEEL_DELTA_WPARAM(w) > 0) {
-    if (_pageStart >= kPageSize)
-      _pageStart -= kPageSize;
+    if (_pageStart >= CandPageSize())
+      _pageStart -= CandPageSize();
     else
       _pageStart = 0;
   } else {
-    if (_pageStart + kPageSize < (int)_items.size())
-      _pageStart += kPageSize;
+    if (_pageStart + CandPageSize()< (int)_items.size())
+      _pageStart += CandPageSize();
   }
   _selected = _pageStart;
   _UpdateSize();  // 关键：刷新 _cellWidths 与窗口宽
@@ -368,4 +367,12 @@ LRESULT CCandidateWindow::_OnDpiChanged(WPARAM w, LPARAM l) {
   _UpdateSize();
   InvalidateRect(_hwnd, nullptr, TRUE);
   return 0;
+}
+
+void CCandidateWindow::RefreshFromConfig() {
+  _RebuildFont();
+  if (_hwnd && IsWindowVisible(_hwnd)) {
+    _UpdateSize();
+    InvalidateRect(_hwnd, nullptr, TRUE);
+  }
 }

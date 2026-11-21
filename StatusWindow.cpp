@@ -1,4 +1,5 @@
 #include "StatusWindow.h"
+#include "Globals.h"
 
 #include <strsafe.h>
 #include <windowsx.h>
@@ -67,44 +68,81 @@ bool CStatusWindow::Create(HINSTANCE instance,
   wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   wc.hbrBackground = nullptr;
   wc.lpszClassName = WindowClassName;
-
   if (!RegisterClassExW(&wc)) {
     if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
       return false;
   }
 
-  // WS_EX_NOACTIVATE prevents the status bar from stealing the edit focus.
-  // WS_EX_TOOLWINDOW keeps it out of the taskbar and Alt+Tab list.
-  // WS_EX_TOPMOST gives it the familiar floating-toolbar behavior.
   const DWORD exStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE;
 
-  RebuildLayout();
-
-  const int width = Scale(kBaseMargin * 2 + kBaseTitleWidth + kBaseGap +
-                          5 * kBaseButtonWidth + 4 * kBaseGap + 5);
-  const int height = Scale(kBaseHeight);
-
-  if (x == CW_USEDEFAULT || y == CW_USEDEFAULT) {
-    RECT work{};
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-    if (x == CW_USEDEFAULT)
-      x = work.right - width - Scale(24);
-    if (y == CW_USEDEFAULT)
-      y = work.bottom - height - Scale(48);
-  }
-
-  _hwnd = CreateWindowExW(exStyle, WindowClassName, _imeName, WS_POPUP, x, y,
-                          width, height, _owner, nullptr, _instance, this);
-
-  if (!_hwnd)
+  // 1) 创建（初始不可见，避免闪烁）
+  _hwnd = CreateWindowExW(exStyle, WindowClassName, _imeName, WS_POPUP, 0, 0,
+                          100, 100, _owner, nullptr, _instance, this);
+  if (!_hwnd) {
+    OutputDebugStringW(L"[JiDa] StatusWindow: CreateWindowExW failed\n");
     return false;
+  }
 
   _created = true;
   RebuildLayout();
 
-  // Do not activate the status window.
-  ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+  // 2) 取真实尺寸
+  RECT wr{};
+  GetWindowRect(_hwnd, &wr);
+  int realW = wr.right - wr.left;
+  int realH = wr.bottom - wr.top;
+  if (realW <= 0 || realH <= 0) {
+    realW = Scale(220);
+    realH = Scale(kBaseHeight);
+  }
+
+  // 3) 目标显示器
+  HWND refWnd = _owner ? _owner : GetForegroundWindow();
+  HMONITOR hmon = refWnd
+                      ? MonitorFromWindow(refWnd, MONITOR_DEFAULTTONEAREST)
+                      : MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  if (!hmon)
+    hmon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+
+  MONITORINFO mi{sizeof(mi)};
+  int workL = 0, workT = 0, workR = GetSystemMetrics(SM_CXSCREEN),
+      workB = GetSystemMetrics(SM_CYSCREEN);
+  if (GetMonitorInfoW(hmon, &mi)) {
+    workL = mi.rcWork.left;
+    workT = mi.rcWork.top;
+    workR = mi.rcWork.right;
+    workB = mi.rcWork.bottom;
+  }
+
+  // 4) 位置计算（严格限制在 work area 内）
+  if (x == CW_USEDEFAULT)
+    x = workR - realW - Scale(16);
+  if (y == CW_USEDEFAULT)
+    y = workB - realH - Scale(40);
+
+  if (x < workL)
+    x = workL;
+  if (y < workT)
+    y = workT;
+  if (x + realW > workR)
+    x = workR - realW;
+  if (y + realH > workB)
+    y = workB - realH;
+
+  // 5) 显示（SWP_SHOWWINDOW 保证窗口真实可见）
+  SetWindowPos(_hwnd, HWND_TOPMOST, x, y, realW, realH,
+               SWP_NOACTIVATE | SWP_SHOWWINDOW);
   UpdateWindow(_hwnd);
+
+  // 6) 日志：记录创建成功及坐标尺寸
+  wchar_t dbg[200];
+  swprintf_s(dbg, L"[JiDa] StatusWindow created at (%d,%d) size (%dx%d)\n", x,
+             y, realW, realH);
+  OutputDebugStringW(dbg);
+
+  // 7) 定时器：仅在成为前台时"补显示"，不再主动隐藏
+  SetTimer(_hwnd, 1, 300, nullptr);
+
   return true;
 }
 
@@ -128,17 +166,15 @@ void CStatusWindow::Destroy() {
 }
 
 void CStatusWindow::Show() {
-  if (_hwnd)
-    ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+  if (!_hwnd)
+    return;
+  ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
 }
 
 void CStatusWindow::Hide() {
-  if (_hwnd)
-    ShowWindow(_hwnd, SW_HIDE);
-}
-
-bool CStatusWindow::IsVisible() const {
-  return _hwnd && IsWindowVisible(_hwnd);
+  if (!_hwnd)
+    return;
+  ShowWindow(_hwnd, SW_HIDE);
 }
 
 void CStatusWindow::UpdateStatus(const InputStatus& status) {
@@ -163,8 +199,29 @@ bool CStatusWindow::GetPosition(POINT* point) const {
 }
 
 void CStatusWindow::SetPosition(int x, int y) {
-  if (_hwnd)
-    SetWindowPos(_hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+  if (!_hwnd)
+    return;
+
+  RECT wr{};
+  GetWindowRect(_hwnd, &wr);
+  int w = wr.right - wr.left;
+  int h = wr.bottom - wr.top;
+
+  HMONITOR hmon =
+      MonitorFromPoint(POINT{x + w / 2, y + h / 2}, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO mi{sizeof(mi)};
+  if (GetMonitorInfoW(hmon, &mi)) {
+    if (x + w > mi.rcWork.right)
+      x = mi.rcWork.right - w;
+    if (y + h > mi.rcWork.bottom)
+      y = mi.rcWork.bottom - h;
+    if (x < mi.rcWork.left)
+      x = mi.rcWork.left;
+    if (y < mi.rcWork.top)
+      y = mi.rcWork.top;
+  }
+
+  SetWindowPos(_hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 UINT CStatusWindow::Dpi() const {
@@ -232,8 +289,8 @@ void CStatusWindow::RebuildLayout() {
 
   if (_hwnd) {
     const int width = x - gap + margin;
-    SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, width, height,
-                 SWP_NOMOVE | SWP_NOACTIVATE);
+    SetWindowPos(_hwnd, nullptr, 0, 0, width, height,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
   }
 }
 
@@ -477,8 +534,39 @@ LRESULT CStatusWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
       InvalidateRect(_hwnd, nullptr, TRUE);
       return 0;
     }
+    case WM_TIMER:
+      if (wParam == 1 && _hwnd) {
+        static bool lastVisible = true;
+        HWND fg = GetForegroundWindow();
+        DWORD fgPid = 0;
+        if (fg)
+          GetWindowThreadProcessId(fg, &fgPid);
+        const bool isFg = (fgPid == GetCurrentProcessId());
+        const bool vis = IsWindowVisible(_hwnd) != FALSE;
 
+        if (!isFg && vis) {
+          // 本进程失去前台：隐藏
+          ShowWindow(_hwnd, SW_HIDE);
+        } else if (isFg && !vis && g_config.showStatusBar) {
+          // 本进程取得前台且用户希望显示：显示
+          ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+        }
+
+        const bool nowVis = IsWindowVisible(_hwnd) != FALSE;
+        if (nowVis != lastVisible) {
+          lastVisible = nowVis;
+          wchar_t dbg[200];
+          swprintf_s(dbg,
+                     L"[JiDa] StatusBar visibility changed: fgPid=%u "
+                     L"selfPid=%u isFg=%d vis=%d cfg=%d\n",
+                     fgPid, GetCurrentProcessId(), isFg ? 1 : 0, nowVis ? 1 : 0,
+                     g_config.showStatusBar ? 1 : 0);
+          OutputDebugStringW(dbg);
+        }
+      }
+      return 0;
     case WM_NCDESTROY: {
+      KillTimer(_hwnd, 1);
       HWND hwnd = _hwnd;
       SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
       _hwnd = nullptr;
