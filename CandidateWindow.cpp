@@ -18,8 +18,8 @@ bool CCandidateWindow::Create(HINSTANCE h) {
   wc.lpszClassName = kCandClass;
   RegisterClassEx(&wc);
   _hwnd = CreateWindowEx(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-                         kCandClass, L"", WS_POPUP, 0, 0, 10, 10, nullptr,
-                         nullptr, h, this);
+                         kCandClass, L"", WS_POPUP | WS_BORDER, 0, 0, 10, 10,
+                         nullptr, nullptr, h, this);
   if (_hwnd) {
     _dpi = 96;
     _RebuildFont();
@@ -223,7 +223,7 @@ LRESULT CCandidateWindow::_OnPaint() {
   HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
   HGDIOBJ oldB = SelectObject(mem, bmp);
   // 设置背景色
-  HBRUSH hBrush = CreateSolidBrush(RGB(251,255,247));
+  HBRUSH hBrush = CreateSolidBrush(g_config.candFontBGColor);
   FillRect(mem, &rc, hBrush);
   SetBkMode(mem, TRANSPARENT);
   HGDIOBJ oldF = SelectObject(mem, _font);
@@ -349,7 +349,7 @@ LRESULT CCandidateWindow::_OnMouseWheel(WPARAM w) {
     else
       _pageStart = 0;
   } else {
-    if (_pageStart + CandPageSize()< (int)_items.size())
+    if (_pageStart + CandPageSize() < (int)_items.size())
       _pageStart += CandPageSize();
   }
   _selected = _pageStart;

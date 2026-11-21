@@ -38,11 +38,14 @@ struct JiDaConfig {
   bool perKeyHint = true;                          // 逐键提示
   bool gbkExt = true;                              // GBK 生僻字
   wchar_t wildcardChar = L'z';                     // 通配符字符
-  bool inlinePreedit = false;                      // 嵌入预编辑
+  bool inlinePreedit = false;                      // 嵌入预编辑，即在输入的同时上屏编码，待上屏汉字时把编码替换掉
   bool showStatusBar = true;                       // 是否显示状态栏
   int candPageSize = 9;                            // 候选框中每页的条目数
   int candFontSize = 14;                           // 候选框中的字体大小
   CandLayout candLayout = CandLayout::Horizontal;  // 候选框选项排列方式
+  wstring candFont = L"Microsoft YaHei";
+  DWORD candFontColor = RGB(255, 0, 0);
+  DWORD candFontBGColor = RGB(251, 255, 247);
 };
 
 extern std::vector<WubiEntry> g_entries;

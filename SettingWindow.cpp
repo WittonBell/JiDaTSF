@@ -131,6 +131,7 @@ HWND CSettingWindow::_MkGroup(const wchar_t* text, int x, int y, int w, int h) {
                          WS_CHILD | WS_VISIBLE | BS_GROUPBOX, _S(x), _S(y),
                          _S(w), _S(h), _hwnd, nullptr, _instance, nullptr);
 }
+
 HWND CSettingWindow::_MkCheck(const wchar_t* text,
                               int x,
                               int y,
@@ -144,6 +145,7 @@ HWND CSettingWindow::_MkCheck(const wchar_t* text,
   SendMessageW(h, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
   return h;
 }
+
 HWND CSettingWindow::_MkRadio(const wchar_t* text,
                               int x,
                               int y,
@@ -161,11 +163,13 @@ HWND CSettingWindow::_MkRadio(const wchar_t* text,
   SendMessageW(h, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
   return h;
 }
+
 HWND CSettingWindow::_MkLabel(const wchar_t* text, int x, int y, int w, int h) {
   return CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
                          _S(x), _S(y), _S(w), _S(h), _hwnd, nullptr, _instance,
                          nullptr);
 }
+
 HWND CSettingWindow::_MkButton(const wchar_t* text,
                                int x,
                                int y,
@@ -177,6 +181,7 @@ HWND CSettingWindow::_MkButton(const wchar_t* text,
                          _S(x), _S(y), _S(w), _S(h), _hwnd, (HMENU)(INT_PTR)id,
                          _instance, nullptr);
 }
+
 HWND CSettingWindow::_MkCombo(int x, int y, int w, int h, int id) {
   return CreateWindowExW(
       0, L"COMBOBOX", L"",
@@ -192,7 +197,7 @@ void CSettingWindow::_Layout() {
                       CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
 
   // ===== 输入选项 =====
-  _MkGroup(L"输入选项", 10, 10, 340, 135);
+  HWND g1 = _MkGroup(L"输入选项", 10, 10, 340, 135);
   _chkAutoCommit =
       _MkCheck(L"四码唯一时自动上屏", 22, 32, 150, ID_AUTO_COMMIT, true);
   _chkZWildcard = _MkCheck(L"Z 键通配", 22, 56, 150, ID_Z_WILDCARD, true);
@@ -204,12 +209,12 @@ void CSettingWindow::_Layout() {
   _chkInline = _MkCheck(L"嵌入预编辑", 185, 80, 150, ID_INLINE_PREEDIT, false);
 
   // ===== 显示选项 =====
-  _MkGroup(L"显示选项", 10, 155, 340, 95);
+  HWND g2 = _MkGroup(L"显示选项", 10, 155, 340, 95);
   _radVert = _MkRadio(L"竖向候选", 22, 176, 90, ID_RAD_VERTICAL, true, true);
   _radHorz =
       _MkRadio(L"横向候选", 120, 176, 90, ID_RAD_HORIZONTAL, false, false);
 
-  _MkLabel(L"每页候选数", 22, 205, 80, 20);
+  HWND l1 = _MkLabel(L"每页候选数", 22, 205, 80, 20);
   _cboPage = _MkCombo(110, 202, 60, 200, ID_CBO_PAGESIZE);
   for (int v = 3; v <= 9; ++v) {
     wchar_t buf[4];
@@ -217,7 +222,7 @@ void CSettingWindow::_Layout() {
     SendMessageW(_cboPage, CB_ADDSTRING, 0, (LPARAM)buf);
   }
 
-  _MkLabel(L"候选字号", 190, 205, 70, 20);
+  HWND l2 = _MkLabel(L"候选字号", 190, 205, 70, 20);
   _cboFont = _MkCombo(258, 202, 60, 200, ID_CBO_FONTSIZE);
   for (int v : {12, 14, 16, 18, 20, 24}) {
     wchar_t buf[4];
@@ -237,7 +242,7 @@ void CSettingWindow::_Layout() {
   HWND all[] = {_chkAutoCommit, _chkZWildcard, _chkZRepeat, _chkSemiSecond,
                 _chkPunctTop,   _chkPerKey,    _chkInline,  _chkShowBar,
                 _radVert,       _radHorz,      _cboPage,    _cboFont,
-                _btnReset,      _btnOk,        _btnCancel};
+                _btnReset,      _btnOk,        _btnCancel,  g1, g2, l1, l2};
   for (HWND h : all)
     SendMessageW(h, WM_SETFONT, (WPARAM)_font, TRUE);
 }
