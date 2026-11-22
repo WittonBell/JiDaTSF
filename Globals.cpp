@@ -2,9 +2,10 @@
 #include <algorithm>
 #include <cwchar>
 #include <cwctype>
+#include <thread>
+#include "Config.h"
 
 HINSTANCE g_hInstance = nullptr;
-
 const CLSID CLSID_JiDaTSF = {0x7A3E8F1C,
                              0x4B2D,
                              0x4E5F,
@@ -18,9 +19,45 @@ std::vector<WubiEntry> g_entries;
 std::vector<TrieNode> g_trie;
 int g_trieRoot = 0;
 
+std::vector<UserPhrase> g_userPhrases;
+std::unordered_map<std::wstring, std::wstring> g_charFullCode;
 std::vector<std::pair<wchar_t, std::wstring>> g_punctMap;
 JiDaConfig g_config;
 
+// ---------- 异步加载状态 ----------
+static std::wstring s_tablePath;
+static std::atomic<bool> s_tableLoaded{false};
+static std::atomic<bool> s_tableLoading{false};
+
+void SetJiDaTablePath(const std::wstring& path) {
+  s_tablePath = path;
+}
+bool IsJiDaTableLoaded() {
+  return s_tableLoaded.load();
+}
+
+void LoadJiDaTableAsync() {
+  if (s_tableLoaded.load())
+    return;
+  bool expected = false;
+  if (!s_tableLoading.compare_exchange_strong(expected, true))
+    return;
+
+  std::wstring path = s_tablePath;
+  std::thread([path]() {
+    bool ok = LoadJiDaTable(path);
+    if (ok) {
+      s_tableLoaded = true;
+      OutputDebugStringW(L"[JiDa] Table loaded OK\n");
+    } else {
+      OutputDebugStringW(
+          L"[JiDa] Table load FAILED, will retry on next Activate\n");
+    }
+    s_tableLoading = false;
+  }).detach();
+}
+
+// ---------- 解析 ----------
 static void StripEntryPrefix(std::wstring& s) {
   while (!s.empty()) {
     wchar_t c = s[0];
@@ -30,7 +67,6 @@ static void StripEntryPrefix(std::wstring& s) {
       break;
   }
 }
-
 static void SplitTokens(const std::wstring& s, std::vector<std::wstring>& out) {
   out.clear();
   std::wstring cur;
@@ -194,9 +230,10 @@ static void BuildTrie() {
 
 bool LoadJiDaTable(const std::wstring& path) {
   FILE* fp = nullptr;
-  if (_wfopen_s(&fp, path.c_str(), L"r, ccs=UTF-8") != 0 || !fp)
+  if (_wfopen_s(&fp, path.c_str(), L"r, ccs=UTF-8") != 0 || !fp) {
+    OutputDebugStringW(L"[JiDa] LoadJiDaTable: cannot open file\n");
     return false;
-
+  }
   bool isJiDa = false;
   {
     wchar_t line[4096];
@@ -223,12 +260,74 @@ bool LoadJiDaTable(const std::wstring& path) {
                      return a.code < b.code;
                    });
   g_entries = std::move(entries);
-
   BuildTrie();
 
-  g_punctMap = {{L',', L"，"}, {L'.', L"。"},  {L';', L"；"}, {L':', L"："},
-                {L'?', L"？"}, {L'!', L"！"},  {L'(', L"（"}, {L')', L"）"},
-                {L'[', L"【"}, {L']', L"】"},  {L'{', L"「"}, {L'}', L"」"},
-                {L'/', L"/"},  {L'\\', L"、"}, {L'\'', L"‘"}, {L'"', L"“"}};
+  g_charFullCode.clear();
+  for (auto& e : g_entries) {
+    if (e.word.size() != 1)
+      continue;  // 只处理单字
+    auto it = g_charFullCode.find(e.word);
+    if (it == g_charFullCode.end() || e.code.size() > it->second.size())
+      g_charFullCode[e.word] = e.code;  // 保留最长编码作为全码
+  }
+
+  if (g_punctMap.empty()) {
+    g_punctMap = {{L',', L"，"}, {L'.', L"。"},  {L';', L"；"}, {L':', L"："},
+                  {L'?', L"？"}, {L'!', L"！"},  {L'(', L"（"}, {L')', L"）"},
+                  {L'[', L"【"}, {L']', L"】"},  {L'{', L"「"}, {L'}', L"」"},
+                  {L'/', L"/"},  {L'\\', L"、"}, {L'\'', L"‘"}, {L'"', L"“"}};
+  }
   return !g_entries.empty();
+}
+
+// ---------- 用户词 ----------
+void LoadUserPhrases() {
+  g_userPhrases.clear();
+  std::wstring path = GetJiDaConfigDir() + L"\\userdict.txt";
+  FILE* fp = nullptr;
+  if (_wfopen_s(&fp, path.c_str(), L"r, ccs=UTF-8") != 0 || !fp)
+    return;
+  wchar_t line[1024];
+  while (fgetws(line, 1024, fp)) {
+    std::wstring s = line;
+    if (!s.empty() && s[0] == 0xFEFF)
+      s.erase(0, 1);
+    while (!s.empty() && (s.back() == L'\r' || s.back() == L'\n'))
+      s.pop_back();
+    if (s.empty() || s[0] == L'#')
+      continue;
+    auto tab = s.find(L'\t');
+    if (tab == std::wstring::npos)
+      continue;
+    UserPhrase up;
+    up.code = s.substr(0, tab);
+    up.text = s.substr(tab + 1);
+    if (!up.code.empty() && !up.text.empty())
+      g_userPhrases.push_back(up);
+  }
+  fclose(fp);
+}
+
+void SaveUserPhrases() {
+  std::wstring path = GetJiDaConfigDir() + L"\\userdict.txt";
+  FILE* fp = nullptr;
+  if (_wfopen_s(&fp, path.c_str(), L"w, ccs=UTF-8") != 0 || !fp)
+    return;
+  fwprintf(fp, L"# JiDaTSF user dictionary\n");
+  for (auto& up : g_userPhrases) {
+    fwprintf(fp, L"%ls\t%ls\n", up.code.c_str(), up.text.c_str());
+  }
+  fclose(fp);
+}
+
+bool AddUserPhrase(const std::wstring& code, const std::wstring& text) {
+  if (code.empty() || text.empty())
+    return false;
+  if (code.size() > 4)
+    return false;
+  for (auto& up : g_userPhrases)
+    if (up.code == code && up.text == text)
+      return false;
+  g_userPhrases.push_back({code, text});
+  return true;
 }

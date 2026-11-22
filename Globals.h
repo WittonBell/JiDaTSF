@@ -1,13 +1,13 @@
 #pragma once
 #include <msctf.h>
 #include <windows.h>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
-
-using namespace std;
 
 extern HINSTANCE g_hInstance;
 extern const CLSID CLSID_JiDaTSF;
@@ -21,43 +21,66 @@ struct WubiEntry {
 
 struct TrieNode {
   int children[26];
-  std::vector<int> ownEntries;     // code 完全等于当前路径的词条
-  std::vector<int> mergedEntries;  // 以当前路径为前缀的全部词条（短码优先）
-
+  std::vector<int> ownEntries;
+  std::vector<int> mergedEntries;
   TrieNode() { memset(children, -1, sizeof(children)); }
+};
+
+struct UserPhrase {
+  std::wstring code;
+  std::wstring text;
 };
 
 enum class CandLayout { Vertical, Horizontal };
 
 struct JiDaConfig {
-  bool autoCommitUnique = true;                    // 四码唯一自动上屏
-  bool zRepeat = true;                             // Z 重复上次上屏
-  bool zWildcard = true;                           // Z 通配
-  bool semicolonSecond = true;                     // 分号选第二重码
-  bool punctuationTop = true;                      // 标点顶屏
-  bool perKeyHint = true;                          // 逐键提示
-  bool gbkExt = true;                              // GBK 生僻字
-  wchar_t wildcardChar = L'z';                     // 通配符字符
-  bool inlinePreedit = false;                      // 嵌入预编辑，即在输入的同时上屏编码，待上屏汉字时把编码替换掉
-  bool showStatusBar = true;                       // 是否显示状态栏
-  int candPageSize = 9;                            // 候选框中每页的条目数
-  int candFontSize = 14;                           // 候选框中的字体大小
-  CandLayout candLayout = CandLayout::Horizontal;  // 候选框选项排列方式
-  wstring candFont = L"Microsoft YaHei";
-  DWORD candFontColor = RGB(255, 0, 0);
-  DWORD candFontBGColor = RGB(251, 255, 247);
+  bool autoCommitUnique = true;
+  bool zRepeat = true;
+  bool zWildcard = true;
+  bool semicolonSecond = true;
+  bool punctuationTop = true;
+  bool perKeyHint = true;
+  bool gbkExt = true;
+  bool inlinePreedit = false;
+  bool showStatusBar = true;
+
+  CandLayout candLayout = CandLayout::Vertical;
+  int candPageSize = 9;
+
+  // 候选框外观
+  wchar_t candFontFace[LF_FACESIZE] = L"Microsoft YaHei";
+  int candFontSize = 14;
+  int candFontWeight = FW_NORMAL;
+  bool candFontItalic = false;
+  COLORREF candBgColor = RGB(255, 255, 255);
+  COLORREF candTextColor = RGB(0, 0, 0);
+  COLORREF candSelBgColor = RGB(0, 120, 215);
+  COLORREF candSelTextColor = RGB(255, 255, 255);
+
+  wchar_t wildcardChar = L'z';
 };
 
 extern std::vector<WubiEntry> g_entries;
 extern std::vector<TrieNode> g_trie;
 extern int g_trieRoot;
 
-extern std::vector<std::pair<wchar_t, wstring>> g_punctMap;
+extern std::vector<UserPhrase> g_userPhrases;
+extern std::unordered_map<std::wstring, std::wstring> g_charFullCode;
+
+extern std::vector<std::pair<wchar_t, std::wstring>> g_punctMap;
 extern JiDaConfig g_config;
 
-bool LoadJiDaTable(const wstring& path);
-
-// 便利：候选页大小，所有引用 CandPageSize()的地方统一改成这个函数
 inline int CandPageSize() {
   return g_config.candPageSize;
 }
+
+// 码表：路径 / 加载
+void SetJiDaTablePath(const std::wstring& path);
+bool IsJiDaTableLoaded();
+void LoadJiDaTableAsync();
+bool LoadJiDaTable(const std::wstring& path);  // 同步加载
+
+// 用户词
+void LoadUserPhrases();
+void SaveUserPhrases();
+bool AddUserPhrase(const std::wstring& code, const std::wstring& text);

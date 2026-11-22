@@ -1,4 +1,3 @@
-// Config.cpp
 #include "Config.h"
 #include <shlobj.h>
 #include "Globals.h"
@@ -34,6 +33,11 @@ static int ReadInt(const wchar_t* sec, const wchar_t* key, int def) {
 static bool ReadBool(const wchar_t* sec, const wchar_t* key, bool def) {
   return ReadInt(sec, key, def ? 1 : 0) != 0;
 }
+static COLORREF ReadColor(const wchar_t* sec,
+                          const wchar_t* key,
+                          COLORREF def) {
+  return (COLORREF)ReadInt(sec, key, (int)def);
+}
 static void WriteInt(const wchar_t* sec, const wchar_t* key, int v) {
   wchar_t buf[32];
   swprintf_s(buf, L"%d", v);
@@ -42,6 +46,20 @@ static void WriteInt(const wchar_t* sec, const wchar_t* key, int v) {
 static void WriteBool(const wchar_t* sec, const wchar_t* key, bool v) {
   WritePrivateProfileStringW(sec, key, v ? L"1" : L"0",
                              GetJiDaConfigPath().c_str());
+}
+static void WriteColor(const wchar_t* sec, const wchar_t* key, COLORREF c) {
+  WriteInt(sec, key, (int)c);
+}
+static void ReadStr(const wchar_t* sec,
+                    const wchar_t* key,
+                    const wchar_t* def,
+                    wchar_t* out,
+                    DWORD cch) {
+  GetPrivateProfileStringW(sec, key, def, out, cch,
+                           GetJiDaConfigPath().c_str());
+}
+static void WriteStr(const wchar_t* sec, const wchar_t* key, const wchar_t* v) {
+  WritePrivateProfileStringW(sec, key, v, GetJiDaConfigPath().c_str());
 }
 
 void LoadJiDaConfig() {
@@ -67,20 +85,32 @@ void LoadJiDaConfig() {
   int vert = ReadInt(DP, L"Vertical",
                      g_config.candLayout == CandLayout::Vertical ? 1 : 0);
   g_config.candLayout = vert ? CandLayout::Vertical : CandLayout::Horizontal;
-
   g_config.candPageSize = ReadInt(DP, L"PageSize", g_config.candPageSize);
   if (g_config.candPageSize < 3)
     g_config.candPageSize = 3;
   if (g_config.candPageSize > 9)
     g_config.candPageSize = 9;
 
-  g_config.candFontSize = ReadInt(DP, L"FontSize", g_config.candFontSize);
-  if (g_config.candFontSize < 10)
-    g_config.candFontSize = 10;
-  if (g_config.candFontSize > 32)
-    g_config.candFontSize = 32;
+  const wchar_t* AP = L"Appearance";
+  ReadStr(AP, L"FontFace", g_config.candFontFace, g_config.candFontFace,
+          LF_FACESIZE);
+  g_config.candFontSize = ReadInt(AP, L"FontSize", g_config.candFontSize);
+  if (g_config.candFontSize < 8)
+    g_config.candFontSize = 8;
+  if (g_config.candFontSize > 48)
+    g_config.candFontSize = 48;
+  g_config.candFontWeight = ReadInt(AP, L"FontWeight", g_config.candFontWeight);
+  g_config.candFontItalic =
+      ReadBool(AP, L"FontItalic", g_config.candFontItalic);
+  g_config.candBgColor = ReadColor(AP, L"BgColor", g_config.candBgColor);
+  g_config.candTextColor = ReadColor(AP, L"TextColor", g_config.candTextColor);
+  g_config.candSelBgColor =
+      ReadColor(AP, L"SelBgColor", g_config.candSelBgColor);
+  g_config.candSelTextColor =
+      ReadColor(AP, L"SelTextColor", g_config.candSelTextColor);
 
-  g_config.showStatusBar = ReadBool(L"StatusBar", L"Show", g_config.showStatusBar);
+  g_config.showStatusBar =
+      ReadBool(L"StatusBar", L"Show", g_config.showStatusBar);
 }
 
 void SaveJiDaConfig() {
@@ -98,7 +128,16 @@ void SaveJiDaConfig() {
   WriteInt(DP, L"Vertical",
            g_config.candLayout == CandLayout::Vertical ? 1 : 0);
   WriteInt(DP, L"PageSize", g_config.candPageSize);
-  WriteInt(DP, L"FontSize", g_config.candFontSize);
+
+  const wchar_t* AP = L"Appearance";
+  WriteStr(AP, L"FontFace", g_config.candFontFace);
+  WriteInt(AP, L"FontSize", g_config.candFontSize);
+  WriteInt(AP, L"FontWeight", g_config.candFontWeight);
+  WriteBool(AP, L"FontItalic", g_config.candFontItalic);
+  WriteColor(AP, L"BgColor", g_config.candBgColor);
+  WriteColor(AP, L"TextColor", g_config.candTextColor);
+  WriteColor(AP, L"SelBgColor", g_config.candSelBgColor);
+  WriteColor(AP, L"SelTextColor", g_config.candSelTextColor);
 
   WriteBool(L"StatusBar", L"Show", g_config.showStatusBar);
 }

@@ -50,6 +50,13 @@ class CSettingWindow {
   HWND _chkSemiSecond = nullptr, _chkPunctTop = nullptr, _chkPerKey = nullptr;
   HWND _chkInline = nullptr, _chkShowBar = nullptr;
   HWND _radVert = nullptr, _radHorz = nullptr;
-  HWND _cboPage = nullptr, _cboFont = nullptr;
+  HWND _cboPage = nullptr;
   HWND _btnReset = nullptr, _btnOk = nullptr, _btnCancel = nullptr;
+
+ private:
+  HWND _btnFont = nullptr;
+  HWND _btnTextClr = nullptr;
+  HWND _btnBgClr = nullptr;
+  HWND _btnSelClr = nullptr;
+  HWND _lblFont = nullptr;
 };

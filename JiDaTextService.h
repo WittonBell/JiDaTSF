@@ -1,10 +1,11 @@
 #pragma once
 #include <msctf.h>
 #include "CandidateWindow.h"
+#include "Config.h"
 #include "Globals.h"
 #include "JiDaEngine.h"
+#include "PhraseWindow.h"
 #include "StatusWindow.h"
-#include "Config.h"
 
 class CJiDaTextService : public ITfTextInputProcessor,
                          public ITfKeyEventSink,
@@ -47,6 +48,7 @@ class CJiDaTextService : public ITfTextInputProcessor,
                            EngineAction act,
                            std::wstring& committed,
                            std::wstring& newBuffer);
+  void _ShowStatusContextMenu(POINT screenPoint);
 
   LONG _ref = 1;
   ITfThreadMgr* _threadMgr = nullptr;
@@ -65,4 +67,6 @@ class CJiDaTextService : public ITfTextInputProcessor,
 
   std::unique_ptr<CStatusWindow> _statusWnd;
   InputStatus _status;
+  std::unique_ptr<CPhraseWindow> _phraseWnd;
+  void _ShowPhraseWindow(ITfContext* pic);
 };

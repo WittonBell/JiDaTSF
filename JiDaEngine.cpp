@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cwctype>
 #include <string_view>
+#include "PhraseWindow.h"
 
 void JiDaEngine::Reset() {
   buffer_.clear();
@@ -11,10 +12,14 @@ void JiDaEngine::Reset() {
   waitDateOrAmount_ = false;
   pageStart_ = 0;
   selected_ = 0;
+  // 注意：不能清 recentCommits_，否则每次提交后历史都被清空
 }
+
 void JiDaEngine::CommitText(const std::wstring& t) {
-  if (!t.empty())
-    lastCommitted_ = t;
+  if (t.empty())
+    return;
+  lastCommitted_ = t;
+  lastCommittedCode_ = buffer_;  // ← 关键：在 Reset 前保存当时编码
 }
 
 void JiDaEngine::ClampSelection() {
@@ -54,8 +59,28 @@ void JiDaEngine::Query(const std::wstring& code) {
   if (code.empty())
     return;
 
+  static bool loggedOnce = false;
+  if (!loggedOnce) {
+    loggedOnce = true;
+    wchar_t dbg[128];
+    swprintf_s(dbg, L"[JiDa] Query: loaded=%d entries=%zu trie=%zu\n",
+               IsJiDaTableLoaded() ? 1 : 0, g_entries.size(), g_trie.size());
+    OutputDebugStringW(dbg);
+  }
+
+  if (!IsJiDaTableLoaded())
+    return;
+
   static constexpr int kMaxCandidates = 50;
   std::unordered_set<std::wstring_view> seen;
+
+  // 0. 用户词优先
+  for (auto& up : g_userPhrases) {
+    if (up.code == code) {
+      if (seen.insert(std::wstring_view(up.text)).second)
+        candidates_.push_back({up.text, up.code});
+    }
+  }
 
   // 1. 精确匹配 + 前缀匹配（Trie mergedEntries 已包含两者，短码优先）
   int cur = TrieWalk(code);
@@ -279,8 +304,10 @@ bool JiDaEngine::OnPunctuation(wchar_t ch,
   for (auto& p : g_punctMap) {
     if (p.first == ch) {
       punct = p.second;
-      if (!candidates_.empty())
+      if (!candidates_.empty()) {
         firstCand = candidates_.front().text;
+        CommitText(firstCand);  // ← 关键：标点顶字路径也要存档
+      }
       return true;
     }
   }
@@ -308,4 +335,48 @@ bool JiDaEngine::OnEnter(std::wstring& committed) {
     return false;
   Reset();
   return false;
+}
+
+void JiDaEngine::OnCommitted(const std::wstring& code,
+                             const std::wstring& text) {
+  if (code.empty() || text.empty())
+    return;
+  if (text.size() > 4)
+    return;
+  for (wchar_t c : code)
+    if (c < L'a' || c > L'z')
+      return;
+  for (wchar_t c : text)
+    if (c < 0x4E00 || c > 0x9FFF) // 只记录汉字
+      return;
+
+  // 连续同字跳过（避免「你你你」）
+  if (!recentCommits_.empty() && recentCommits_.back().text == text)
+    return;
+
+  std::wstring fullCode;
+  auto it = g_charFullCode.find(text);
+  if (it != g_charFullCode.end())
+    fullCode = it->second;
+  else
+    fullCode = code;
+
+  recentCommits_.push_back({code, fullCode, text});
+  if (recentCommits_.size() > 20)
+    recentCommits_.erase(recentCommits_.begin());
+}
+bool JiDaEngine::CreateUserPhrase(std::wstring& outCode,
+                                  std::wstring& outText) {
+  if (recentCommits_.size() < 2)
+    return false;
+  outCode.clear();
+  outText.clear();
+  for (auto& r : recentCommits_) {
+    outCode += r.code;
+    outText += r.text;
+  }
+  recentCommits_.clear();
+  if (outCode.size() > 4)
+    outCode.resize(4);
+  return !outCode.empty() && !outText.empty();
 }

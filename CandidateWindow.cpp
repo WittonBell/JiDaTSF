@@ -46,11 +46,12 @@ void CCandidateWindow::Hide() {
 void CCandidateWindow::_RebuildFont() {
   if (_font)
     DeleteObject(_font);
-  _font = CreateFontW(-MulDiv(g_config.candFontSize, _dpi, 96), 0, 0, 0,
-                      FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                      CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
-  _rowHeight = MulDiv(g_config.candFontSize + 14, _dpi, 96);
+  int height = -MulDiv(g_config.candFontSize, _dpi, 72);  // point → pixel
+  _font = CreateFontW(height, 0, 0, 0, g_config.candFontWeight,
+                      g_config.candFontItalic ? TRUE : FALSE, FALSE, FALSE,
+                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                      CLEARTYPE_QUALITY, DEFAULT_PITCH, g_config.candFontFace);
+  _rowHeight = MulDiv(g_config.candFontSize + 14, _dpi, 72);
   _padding = MulDiv(8, _dpi, 96);
 }
 
@@ -209,6 +210,13 @@ LRESULT CALLBACK CCandidateWindow::_WndProc(HWND h,
       return self->_OnDpiChanged(w, l);
     case WM_MOUSEACTIVATE:
       return MA_NOACTIVATE;
+    case WM_RBUTTONUP: {
+      POINT pt = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
+      ClientToScreen(h, &pt);
+      if (self->OnContextMenu)
+        self->OnContextMenu(pt);
+      return 0;
+    }
   }
   return DefWindowProc(h, msg, w, l);
 }
@@ -223,8 +231,9 @@ LRESULT CCandidateWindow::_OnPaint() {
   HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
   HGDIOBJ oldB = SelectObject(mem, bmp);
   // 设置背景色
-  HBRUSH hBrush = CreateSolidBrush(g_config.candFontBGColor);
-  FillRect(mem, &rc, hBrush);
+  HBRUSH bg = CreateSolidBrush(g_config.candBgColor);
+  FillRect(mem, &rc, bg);
+  DeleteObject(bg);
   SetBkMode(mem, TRANSPARENT);
   HGDIOBJ oldF = SelectObject(mem, _font);
 
@@ -232,7 +241,7 @@ LRESULT CCandidateWindow::_OnPaint() {
 
   if (!_title.empty()) {
     RECT titleRc = {_padding, y, rc.right - _padding, y + _rowHeight};
-    SetTextColor(mem, RGB(0, 100, 200));
+    SetTextColor(mem, g_config.candTextColor);
     DrawTextW(mem, _title.c_str(), (int)_title.size(), &titleRc,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     y += _rowHeight;
@@ -258,11 +267,15 @@ LRESULT CCandidateWindow::_OnPaint() {
       int local = i - _pageStart;
       std::wstring line = std::to_wstring(local + 1) + L". " + _items[i].text;
       RECT row = {_padding, y, rc.right - _padding, y + _rowHeight};
+      // 选中行
       if (i == _selected) {
-        FillRect(mem, &row, (HBRUSH)(COLOR_HIGHLIGHT + 1));
-        SetTextColor(mem, GetSysColor(COLOR_HIGHLIGHTTEXT));
-      } else
-        SetTextColor(mem, GetSysColor(COLOR_WINDOWTEXT));
+        HBRUSH selBg = CreateSolidBrush(g_config.candSelBgColor);
+        FillRect(mem, &row, selBg);
+        DeleteObject(selBg);
+        SetTextColor(mem, g_config.candSelTextColor);
+      } else {
+        SetTextColor(mem, g_config.candTextColor);
+      }
       DrawTextW(mem, line.c_str(), (int)line.size(), &row,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
       y += _rowHeight;
@@ -276,11 +289,14 @@ LRESULT CCandidateWindow::_OnPaint() {
           (local < (int)_cellWidths.size()) ? _cellWidths[local] : _rowHeight;
       std::wstring line = std::to_wstring(local + 1) + L"." + _items[i].text;
       RECT cell = {x, y, x + cw, y + _rowHeight};
+      // 选中行
       if (i == _selected) {
-        FillRect(mem, &cell, (HBRUSH)(COLOR_HIGHLIGHT + 1));
-        SetTextColor(mem, GetSysColor(COLOR_HIGHLIGHTTEXT));
+        HBRUSH selBg = CreateSolidBrush(g_config.candSelBgColor);
+        FillRect(mem, &cell, selBg);
+        DeleteObject(selBg);
+        SetTextColor(mem, g_config.candSelTextColor);
       } else {
-        SetTextColor(mem, GetSysColor(COLOR_WINDOWTEXT));
+        SetTextColor(mem, g_config.candTextColor);
       }
       DrawTextW(mem, line.c_str(), (int)line.size(), &cell,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -288,12 +304,12 @@ LRESULT CCandidateWindow::_OnPaint() {
     }
   }
 
+
   SelectObject(mem, oldF);
   BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
   SelectObject(mem, oldB);
   DeleteObject(bmp);
   DeleteDC(mem);
-  DeleteObject(hBrush);
   EndPaint(_hwnd, &ps);
   return 0;
 }

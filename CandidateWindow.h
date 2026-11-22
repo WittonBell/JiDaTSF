@@ -17,8 +17,11 @@ class CCandidateWindow {
             RECT rcCaret,
             UINT dpi);
   void Hide();
-  void SetTitle(const std::wstring& t) { _title = t; }
+
+  std::function<void(POINT)> OnContextMenu;  // 右键菜单回调
+  HWND GetHwnd() const { return _hwnd; } 
   void RefreshFromConfig();
+  void SetTitle(const std::wstring& t) { _title = t; }
 
  private:
   static LRESULT CALLBACK _WndProc(HWND, UINT, WPARAM, LPARAM);

@@ -7,7 +7,8 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD r, LPVOID) {
     g_hInstance = h;
     DisableThreadLibraryCalls(h);
     EnablePerMonitorV2();
-    LoadJiDaConfig();  // ← 新增：先读配置，再加载码表
+    LoadJiDaConfig();
+    LoadUserPhrases();
 
     wchar_t buf[MAX_PATH];
     GetModuleFileNameW(h, buf, MAX_PATH);
@@ -15,7 +16,9 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD r, LPVOID) {
     auto slash = dir.find_last_of(L"\\/");
     if (slash != std::wstring::npos)
       dir = dir.substr(0, slash + 1);
-    LoadJiDaTable(dir + L"data\\jidian_wubi86.txt");
+
+    SetJiDaTablePath(dir + L"data\\jidian_wubi86.txt");
+    // 不在 DllMain 里同步加载：由 Activate 调 LoadJiDaTableAsync()
   }
   return TRUE;
 }

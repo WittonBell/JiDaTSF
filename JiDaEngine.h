@@ -55,4 +55,27 @@ class JiDaEngine {
   int selected_ = 0;
 
   InputStatus _inputStatus;
+
+ public:
+  // 提交历史（用户词造词用）
+  void OnCommitted(const std::wstring& code, const std::wstring& text);
+  bool CreateUserPhrase(std::wstring& outCode, std::wstring& outText);
+  void ClearRecentCommits() { recentCommits_.clear(); }
+  struct RecentCommit {
+    std::wstring code;      // 用户输入的简码
+    std::wstring fullCode;  // 五笔全码
+    std::wstring text;
+  };
+  const std::vector<RecentCommit>& GetRecentCommits() const {
+    return recentCommits_;
+  }
+  // 根据选中的条目按五笔规则生成词组编码
+  static std::wstring BuildPhraseCode(
+      const std::vector<struct PhraseEntry>& entries);
+  const std::wstring& LastCommitted() const { return lastCommitted_; }
+  const std::wstring& LastCommittedCode() const { return lastCommittedCode_; }
+
+ private:
+  std::vector<RecentCommit> recentCommits_;
+  std::wstring lastCommittedCode_;
 };

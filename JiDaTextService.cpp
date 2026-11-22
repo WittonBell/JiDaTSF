@@ -14,6 +14,51 @@ static wchar_t VkToChar(WPARAM vk, LPARAM lParam) {
   return (n == 1) ? buf[0] : 0;
 }
 
+// 按五笔规则生成词组编码：
+//   2 字：各取前 2 码
+//   3 字：第 1 字 1 码 + 第 2 字 1 码 + 第 3 字 2 码
+//   4 字：各取前 1 码
+//   5+ 字：第 1、2、3、末字各 1 码
+static std::wstring BuildPhraseCode(const std::vector<PhraseEntry>& entries) {
+  if (entries.empty())
+    return L"";
+
+  auto getFull = [](const PhraseEntry& e) -> const std::wstring& {
+    return e.fullCode.empty() ? e.code : e.fullCode;
+  };
+  auto safeSub = [](const std::wstring& s, size_t pos, size_t len) {
+    if (pos >= s.size())
+      return std::wstring();
+    return s.substr(pos, (std::min)(len, s.size() - pos));
+  };
+
+  size_t n = entries.size();
+  std::wstring code;
+
+  if (n == 1) {
+    code = getFull(entries[0]);
+  } else if (n == 2) {
+    code =
+        safeSub(getFull(entries[0]), 0, 2) + safeSub(getFull(entries[1]), 0, 2);
+  } else if (n == 3) {
+    code = safeSub(getFull(entries[0]), 0, 1) +
+           safeSub(getFull(entries[1]), 0, 1) +
+           safeSub(getFull(entries[2]), 0, 2);
+  } else if (n == 4) {
+    for (size_t i = 0; i < 4; ++i)
+      code += safeSub(getFull(entries[i]), 0, 1);
+  } else {
+    code = safeSub(getFull(entries[0]), 0, 1) +
+           safeSub(getFull(entries[1]), 0, 1) +
+           safeSub(getFull(entries[2]), 0, 1) +
+           safeSub(getFull(entries[n - 1]), 0, 1);
+  }
+
+  if (code.size() > 4)
+    code.resize(4);
+  return code;
+}
+
 CJiDaTextService::CJiDaTextService() = default;
 CJiDaTextService::~CJiDaTextService() {
   if (_activeCtx) {
@@ -74,6 +119,8 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     OutputDebugStringW(L"[JiDa] Activate: QI ITfKeystrokeMgr FAILED\n");
   }
 
+  LoadJiDaTableAsync();
+
   // ---------------- 2. 线程事件 sink（必须走 ITfSource） ----------------
   ITfSource* source = nullptr;
   if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfSource, (void**)&source))) {
@@ -105,6 +152,14 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     _engine.Reset();
     _HideCandidates();
   };
+
+  _candWnd->OnContextMenu = [this](POINT pt) { _ShowStatusContextMenu(pt); };
+
+  _phraseWnd = std::make_unique<CPhraseWindow>();
+  if (!_phraseWnd->Create(g_hInstance)) {
+    OutputDebugStringW(L"[JiDa] Activate: phrase window create FAILED\n");
+    _phraseWnd.reset();
+  }
 
   // ---------------- 4. 状态栏 ----------------
   _status = InputStatus{};
@@ -174,6 +229,11 @@ STDMETHODIMP CJiDaTextService::Deactivate() {
     _activeCtx = nullptr;
   }
 
+  if (_phraseWnd) {
+    _phraseWnd->Destroy();
+    _phraseWnd.reset();
+  }
+
   return S_OK;
 }
 
@@ -185,10 +245,29 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
                                              WPARAM wParam,
                                              LPARAM,
                                              BOOL* pfEaten) {
+  if ((GetKeyState(VK_CONTROL) & 0x8000) &&
+      (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
+    *pfEaten = TRUE;
+    return S_OK;
+  }
+
   *pfEaten = FALSE;
   // 英文模式：任何按键都交给宿主处理
   if (!_status.chinese)
     return S_OK;
+
+  // 造词窗口可见时独占全部按键
+  if (_phraseWnd && _phraseWnd->IsVisible()) {
+    *pfEaten = TRUE;
+    return S_OK;
+  }
+
+  // Ctrl + 加号：吞掉，由 OnKeyDown 弹出造词窗口
+  if ((GetKeyState(VK_CONTROL) & 0x8000) &&
+      (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
+    *pfEaten = TRUE;
+    return S_OK;
+  }
 
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift && wParam >= 'A' && wParam <= 'Z')
@@ -258,6 +337,21 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   }
   _activeCtx = pic;
   _activeCtx->AddRef();
+
+      // 造词窗口可见：把按键转给它，不让其他逻辑介入
+  if (_phraseWnd && _phraseWnd->IsVisible()) {
+    *pfEaten = TRUE;
+    _phraseWnd->HandleKey(wParam);
+    return S_OK;
+  }
+
+  // Ctrl + 加号：弹出 / 关闭造词窗口
+  if ((GetKeyState(VK_CONTROL) & 0x8000) &&
+      (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
+    *pfEaten = TRUE;
+    _ShowPhraseWindow(pic);
+    return S_OK;
+  }
 
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift && wParam >= 'A' && wParam <= 'Z')
@@ -486,14 +580,35 @@ void CJiDaTextService::_CommitAndEnd(ITfContext* pic,
                                      const std::wstring& text) {
   if (text.empty())
     return;
-  if (_clientId == TF_CLIENTID_NULL)
+  if (_clientId == TF_CLIENTID_NULL) {
+    OutputDebugStringW(L"[JiDa] Commit: _clientId NULL\n");
     return;
+  }
+
+  // 记录上屏历史（供 Ctrl+= 造词）
+  // 此时 _engine.Buffer() 已被 OnSpace/OnDigit/OnLetter 内部 Reset 清空，
+  // 必须用 CommitText 里存档的 LastCommittedCode()
+  std::wstring code = _engine.LastCommittedCode();
+  if (!code.empty()) {
+    _engine.OnCommitted(code, text);
+    wchar_t dbg[200];
+    swprintf_s(dbg, L"[JiDa] Commit recorded: %ls -> %ls (history=%zu)\n",
+               code.c_str(), text.c_str(), _engine.GetRecentCommits().size());
+    OutputDebugStringW(dbg);
+  }
 
   auto* s = new CCommitSession(pic, _composition, text);
   HRESULT phrSession = E_FAIL;
-  pic->RequestEditSession(_clientId, s, TF_ES_SYNC | TF_ES_READWRITE,
-                          &phrSession);
+  HRESULT hr = pic->RequestEditSession(
+      _clientId, s, TF_ES_SYNC | TF_ES_READWRITE, &phrSession);
   s->Release();
+
+  wchar_t buf[256];
+  swprintf_s(buf, L"[JiDa] Commit hr=0x%08X phr=0x%08X hasComp=%d text=%ls\n",
+             (unsigned)hr, (unsigned)phrSession, _composition ? 1 : 0,
+             text.c_str());
+  OutputDebugStringW(buf);
+
   if (_composition) {
     _composition->Release();
     _composition = nullptr;
@@ -682,4 +797,164 @@ void CJiDaTextService::_SyncStatusBarVisibility() {
     _statusWnd->Show();
   else
     _statusWnd->Hide();
+}
+
+void CJiDaTextService::_ShowStatusContextMenu(POINT screenPoint) {
+  HMENU menu = CreatePopupMenu();
+  if (!menu)
+    return;
+
+  AppendMenuW(menu, MF_STRING | (_status.chinese ? MF_CHECKED : 0), 1001,
+              _status.chinese ? L"中文输入" : L"英文输入");
+  AppendMenuW(menu, MF_STRING | (_status.fullShape ? MF_CHECKED : 0), 1002,
+              _status.fullShape ? L"全角" : L"半角");
+  AppendMenuW(menu, MF_STRING | (_status.chinesePunctuation ? MF_CHECKED : 0),
+              1003, _status.chinesePunctuation ? L"中文标点" : L"英文标点");
+  AppendMenuW(menu, MF_STRING | (_status.traditional ? MF_CHECKED : 0), 1004,
+              _status.traditional ? L"繁体" : L"简体");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING, 1005, L"设置...");
+  AppendMenuW(menu, MF_STRING, 1006, L"隐藏状态栏");
+
+  HWND owner = _candWnd ? _candWnd->GetHwnd()
+                        : (_statusWnd ? _statusWnd->GetHwnd() : nullptr);
+
+  UINT cmd =
+      TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                     screenPoint.x, screenPoint.y, 0, owner, nullptr);
+  DestroyMenu(menu);
+
+  switch (cmd) {
+    case 1001:
+      _OnStatusCommand(StatusCommand::ToggleChinese);
+      break;
+    case 1002:
+      _OnStatusCommand(StatusCommand::ToggleFullShape);
+      break;
+    case 1003:
+      _OnStatusCommand(StatusCommand::TogglePunctuation);
+      break;
+    case 1004:
+      _OnStatusCommand(StatusCommand::ToggleTraditional);
+      break;
+    case 1005:
+      _OnStatusCommand(StatusCommand::OpenSettings);
+      break;
+    case 1006:
+      _OnStatusCommand(StatusCommand::HideStatusWindow);
+      break;
+    default:
+      break;
+  }
+}
+
+void CJiDaTextService::_ShowPhraseWindow(ITfContext* pic) {
+  if (!_phraseWnd)
+    return;
+
+  // 已可见 → 视为取消
+  if (_phraseWnd->IsVisible()) {
+    _phraseWnd->Hide();
+    _engine.ClearRecentCommits();
+    OutputDebugStringW(L"[JiDa] Phrase: closed, history cleared\n");
+    return;
+  }
+
+  auto& commits = _engine.GetRecentCommits();
+  wchar_t dbg[128];
+  swprintf_s(dbg, L"[JiDa] Phrase: history=%zu\n", commits.size());
+  OutputDebugStringW(dbg);
+
+  if (commits.size() < 2) {
+    OutputDebugStringW(L"[JiDa] Phrase: need >=2, ignore\n");
+    return;
+  }
+
+  // 最多显示最近 16 个
+  const size_t kMaxDisplay = 16;
+  size_t start =
+      (commits.size() > kMaxDisplay) ? commits.size() - kMaxDisplay : 0;
+
+  std::vector<PhraseEntry> entries;
+  entries.reserve(commits.size() - start);
+  for (size_t i = start; i < commits.size(); ++i) {
+    entries.push_back(PhraseEntry{commits[i].code, commits[i].fullCode,
+                                  commits[i].text, true});
+  }
+
+  // 定位到光标
+  POINT anchor = {0, 0};
+  RECT rcCaret = {0, 0, 0, 0};
+  ITfContextView* view = nullptr;
+  if (SUCCEEDED(pic->GetActiveView(&view)) && view) {
+    ITfRange* range = nullptr;
+    TF_SELECTION sel;
+    ULONG n = 0;
+    if (SUCCEEDED(pic->GetSelection(TF_INVALID_EDIT_COOKIE,
+                                    TF_DEFAULT_SELECTION, 1, &sel, &n)) &&
+        n)
+      range = sel.range;
+    if (range) {
+      RECT r;
+      BOOL clipped = FALSE;
+      view->GetTextExt(TF_INVALID_EDIT_COOKIE, range, &r, &clipped);
+      if (r.right > r.left || r.bottom > r.top)
+        rcCaret = r;
+      range->Release();
+    }
+    view->Release();
+  }
+  anchor.x = rcCaret.left;
+  anchor.y = rcCaret.bottom;
+
+  // 取消回调：清空历史
+  _phraseWnd->OnCancel = [this]() {
+    _engine.ClearRecentCommits();
+    OutputDebugStringW(L"[JiDa] Phrase: cancelled, history cleared\n");
+  };
+
+  // 确认回调：生成编码 + 写入词库 + 清空历史
+  _phraseWnd->Show(
+      entries, anchor, [this](const std::vector<PhraseEntry>& selected) {
+        std::wstring code = BuildPhraseCode(selected);
+        std::wstring text;
+        for (auto& e : selected)
+          text += e.text;
+
+        wchar_t d[512];
+        swprintf_s(d,
+                   L"[JiDa] Phrase confirm: count=%zu code='%ls' text='%ls'\n",
+                   selected.size(), code.c_str(), text.c_str());
+        OutputDebugStringW(d);
+
+        if (code.empty() || text.empty()) {
+          _engine.ClearRecentCommits();
+          return;
+        }
+
+        // 重复检查
+        bool dup = false;
+        for (auto& up : g_userPhrases) {
+          if (up.code == code && up.text == text) {
+            dup = true;
+            break;
+          }
+        }
+        if (dup) {
+          OutputDebugStringW(L"[JiDa] Phrase: duplicate, skip\n");
+          _engine.ClearRecentCommits();
+          return;
+        }
+
+        if (AddUserPhrase(code, text)) {
+          SaveUserPhrases();
+          swprintf_s(d, L"[JiDa] Phrase saved: %ls -> %ls (total=%zu)\n",
+                     code.c_str(), text.c_str(), g_userPhrases.size());
+          OutputDebugStringW(d);
+        } else {
+          OutputDebugStringW(L"[JiDa] Phrase: AddUserPhrase returned false\n");
+        }
+
+        _engine.ClearRecentCommits();
+      });
 }

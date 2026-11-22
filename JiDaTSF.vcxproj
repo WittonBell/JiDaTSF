@@ -78,6 +78,7 @@
     <ClCompile Include="Config.cpp" />
     <ClCompile Include="DllMain.cpp" />
     <ClCompile Include="Globals.cpp" />
+    <ClCompile Include="PhraseWindow.cpp" />
     <ClCompile Include="Server.cpp" />
     <ClCompile Include="Register.cpp" />
     <ClCompile Include="JiDaEngine.cpp" />
@@ -95,6 +96,7 @@
     <ClInclude Include="JiDaTextService.h" />
     <ClInclude Include="CandidateWindow.h" />
     <ClInclude Include="DpiHelper.h" />
+    <ClInclude Include="PhraseWindow.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="SettingWindow.h" />
     <ClInclude Include="StatusWindow.h" />

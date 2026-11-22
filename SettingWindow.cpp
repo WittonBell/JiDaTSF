@@ -23,7 +23,11 @@ enum : int {
   ID_SHOW_STATUS,
   ID_BTN_RESET,
   ID_BTN_OK,
-  ID_BTN_CANCEL
+  ID_BTN_CANCEL,
+  ID_BTN_FONT,
+  ID_BTN_TEXTCLR,
+  ID_BTN_BGCLR,
+  ID_BTN_SELCLR
 };
 constexpr wchar_t kClass[] = L"JiDa.SettingWindow";
 }  // namespace
@@ -74,8 +78,7 @@ bool CSettingWindow::_Create() {
   wc.lpszClassName = kClass;
   RegisterClassExW(&wc);
 
-  // 客户区 360x336（比原来 370 紧凑，给任务栏/缩放留余量）
-  RECT rc = {0, 0, _S(360), _S(336)};
+  RECT rc = {0, 0, _S(360), _S(385)};
   AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU | WS_POPUP, FALSE, 0);
   int winW = rc.right - rc.left;
   int winH = rc.bottom - rc.top;
@@ -197,7 +200,7 @@ void CSettingWindow::_Layout() {
                       CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
 
   // ===== 输入选项 =====
-  HWND g1 = _MkGroup(L"输入选项", 10, 10, 340, 135);
+  HWND g1 = _MkGroup(L"输入选项", 10, 10, 340, 125);
   _chkAutoCommit =
       _MkCheck(L"四码唯一时自动上屏", 22, 32, 150, ID_AUTO_COMMIT, true);
   _chkZWildcard = _MkCheck(L"Z 键通配", 22, 56, 150, ID_Z_WILDCARD, true);
@@ -209,40 +212,59 @@ void CSettingWindow::_Layout() {
   _chkInline = _MkCheck(L"嵌入预编辑", 185, 80, 150, ID_INLINE_PREEDIT, false);
 
   // ===== 显示选项 =====
-  HWND g2 = _MkGroup(L"显示选项", 10, 155, 340, 95);
-  _radVert = _MkRadio(L"竖向候选", 22, 176, 90, ID_RAD_VERTICAL, true, true);
+  HWND g2 = _MkGroup(L"显示选项", 10, 145, 340, 140);
+  _radVert = _MkRadio(L"竖向候选", 22, 165, 90, ID_RAD_VERTICAL, true, true);
   _radHorz =
-      _MkRadio(L"横向候选", 120, 176, 90, ID_RAD_HORIZONTAL, false, false);
+      _MkRadio(L"横向候选", 120, 165, 90, ID_RAD_HORIZONTAL, false, false);
 
-  HWND l1 = _MkLabel(L"每页候选数", 22, 205, 80, 20);
-  _cboPage = _MkCombo(110, 202, 60, 200, ID_CBO_PAGESIZE);
+  HWND l1 = _MkLabel(L"每页候选数", 22, 195, 80, 20);
+  _cboPage = _MkCombo(110, 193, 60, 190, ID_CBO_PAGESIZE);
   for (int v = 3; v <= 9; ++v) {
     wchar_t buf[4];
     swprintf_s(buf, L"%d", v);
     SendMessageW(_cboPage, CB_ADDSTRING, 0, (LPARAM)buf);
   }
 
-  HWND l2 = _MkLabel(L"候选字号", 190, 205, 70, 20);
-  _cboFont = _MkCombo(258, 202, 60, 200, ID_CBO_FONTSIZE);
-  for (int v : {12, 14, 16, 18, 20, 24}) {
-    wchar_t buf[4];
-    swprintf_s(buf, L"%d", v);
-    SendMessageW(_cboFont, CB_ADDSTRING, 0, (LPARAM)buf);
-  }
+  HWND l2 = _MkLabel(L"候选字体", 22, 223, 60, 20);
+  _lblFont = _MkLabel(L"", 100, 223, 120, 20);
+  _btnFont = _MkButton(L"选择字体...", 250, 218, 86, 24, ID_BTN_FONT);
 
-  // == == = 状态栏 == == = _MkGroup(L"状态栏", 10, 255, 340, 44);
-  _chkShowBar = _MkCheck(L"显示状态栏", 22, 272, 150, ID_SHOW_STATUS, true);
+  _btnTextClr = _MkButton(L"文字色", 22, 250, 70, 24, ID_BTN_TEXTCLR);
+  _btnBgClr = _MkButton(L"背景色", 110, 250, 70, 24, ID_BTN_BGCLR);
+  _btnSelClr = _MkButton(L"高亮色", 198, 250, 70, 24, ID_BTN_SELCLR);
 
-  // ===== 按钮 =====
-  _btnReset = _MkButton(L"恢复默认(&R)", 14, 306, 100, 26, ID_BTN_RESET);
-  _btnOk = _MkButton(L"确定(&O)", 245, 306, 100, 26, ID_BTN_OK);
-  _btnCancel = _MkButton(L"取消(&C)", 155, 306, 80, 26, ID_BTN_CANCEL);
+  HWND g3 = _MkGroup(L"状态栏", 10, 295, 340, 44);
+  _chkShowBar = _MkCheck(L"显示状态栏", 22, 312, 150, ID_SHOW_STATUS, true);
+
+  _btnReset = _MkButton(L"恢复默认(&R)", 14, 346, 100, 26, ID_BTN_RESET);
+  _btnOk = _MkButton(L"确定(&O)", 245, 346, 100, 26, ID_BTN_OK);
+  _btnCancel = _MkButton(L"取消(&C)", 155, 346, 80, 26, ID_BTN_CANCEL);
 
   // 统一字体
-  HWND all[] = {_chkAutoCommit, _chkZWildcard, _chkZRepeat, _chkSemiSecond,
-                _chkPunctTop,   _chkPerKey,    _chkInline,  _chkShowBar,
-                _radVert,       _radHorz,      _cboPage,    _cboFont,
-                _btnReset,      _btnOk,        _btnCancel,  g1, g2, l1, l2};
+  HWND all[] = {_chkAutoCommit,
+                _chkZWildcard,
+                _chkZRepeat,
+                _chkSemiSecond,
+                _chkPunctTop,
+                _chkPerKey,
+                _chkInline,
+                _chkShowBar,
+                _radVert,
+                _radHorz,
+                _cboPage,
+                _btnReset,
+                _btnOk,
+                _btnCancel,
+                _lblFont,
+                _btnFont,
+                _btnTextClr,
+                _btnBgClr,
+                _btnSelClr,
+                g1,
+                g2,
+                g3,
+                l1,
+                l2};
   for (HWND h : all)
     SendMessageW(h, WM_SETFONT, (WPARAM)_font, TRUE);
 }
@@ -267,8 +289,10 @@ void CSettingWindow::_LoadFromConfig() {
   wchar_t buf[8];
   swprintf_s(buf, L"%d", g_config.candPageSize);
   SendMessageW(_cboPage, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)buf);
-  swprintf_s(buf, L"%d", g_config.candFontSize);
-  SendMessageW(_cboFont, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)buf);
+  // 字体标签
+  wchar_t label[128];
+  swprintf_s(label, L"%ls %d", g_config.candFontFace, g_config.candFontSize);
+  SetWindowTextW(_lblFont, label);
 }
 
 void CSettingWindow::_SaveToConfig() {
@@ -295,13 +319,6 @@ void CSettingWindow::_SaveToConfig() {
   int idx = (int)SendMessageW(_cboPage, CB_GETCURSEL, 0, 0);
   if (idx >= 0)
     g_config.candPageSize = 3 + idx;
-
-  idx = (int)SendMessageW(_cboFont, CB_GETCURSEL, 0, 0);
-  if (idx >= 0) {
-    static const int sizes[] = {12, 14, 16, 18, 20, 24};
-    if (idx < (int)(sizeof(sizes) / sizeof(sizes[0])))
-      g_config.candFontSize = sizes[idx];
-  }
 }
 
 void CSettingWindow::_ResetToDefault() {
@@ -322,8 +339,6 @@ void CSettingWindow::_ResetToDefault() {
   wchar_t buf[8];
   swprintf_s(buf, L"%d", d.candPageSize);
   SendMessageW(_cboPage, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)buf);
-  swprintf_s(buf, L"%d", d.candFontSize);
-  SendMessageW(_cboFont, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)buf);
 }
 
 void CSettingWindow::_Close(bool save) {
@@ -361,6 +376,85 @@ LRESULT CSettingWindow::_Handle(UINT msg, WPARAM wParam, LPARAM lParam) {
         case ID_BTN_CANCEL:
           _Close(false);
           return 0;
+        case ID_BTN_FONT: {
+          LOGFONTW lf = {};
+          wcscpy_s(lf.lfFaceName, g_config.candFontFace);
+          HDC hdc = GetDC(_hwnd);
+          int dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+          ReleaseDC(_hwnd, hdc);
+          lf.lfHeight = -MulDiv(g_config.candFontSize, dpi, 72);
+          lf.lfWeight = g_config.candFontWeight;
+          lf.lfItalic = g_config.candFontItalic ? TRUE : FALSE;
+
+          CHOOSEFONTW cf = {};
+          cf.lStructSize = sizeof(cf);
+          cf.hwndOwner = _hwnd;
+          cf.lpLogFont = &lf;
+          cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_EFFECTS;
+          cf.rgbColors = g_config.candTextColor;
+
+          if (ChooseFontW(&cf)) {
+            wcscpy_s(g_config.candFontFace, lf.lfFaceName);
+            g_config.candFontSize = cf.iPointSize / 10;
+            if (g_config.candFontSize < 8)
+              g_config.candFontSize = 8;
+            if (g_config.candFontSize > 48)
+              g_config.candFontSize = 48;
+            g_config.candFontWeight = lf.lfWeight;
+            g_config.candFontItalic = lf.lfItalic != 0;
+            g_config.candTextColor = cf.rgbColors;
+
+            wchar_t label[128];
+            swprintf_s(label, L"%ls %d", g_config.candFontFace,
+                       g_config.candFontSize);
+            SetWindowTextW(_lblFont, label);
+          }
+          return 0;
+        }
+        case ID_BTN_TEXTCLR: {
+          static COLORREF cust[16] = {};
+          CHOOSECOLORW cc = {};
+          cc.lStructSize = sizeof(cc);
+          cc.hwndOwner = _hwnd;
+          cc.lpCustColors = cust;
+          cc.rgbResult = g_config.candTextColor;
+          cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+          if (ChooseColorW(&cc))
+            g_config.candTextColor = cc.rgbResult;
+          return 0;
+        }
+        case ID_BTN_BGCLR: {
+          static COLORREF cust[16] = {};
+          CHOOSECOLORW cc = {};
+          cc.lStructSize = sizeof(cc);
+          cc.hwndOwner = _hwnd;
+          cc.lpCustColors = cust;
+          cc.rgbResult = g_config.candBgColor;
+          cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+          if (ChooseColorW(&cc))
+            g_config.candBgColor = cc.rgbResult;
+          return 0;
+        }
+        case ID_BTN_SELCLR: {
+          static COLORREF cust[16] = {};
+          CHOOSECOLORW cc = {};
+          cc.lStructSize = sizeof(cc);
+          cc.hwndOwner = _hwnd;
+          cc.lpCustColors = cust;
+          cc.rgbResult = g_config.candSelBgColor;
+          cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+          if (ChooseColorW(&cc)) {
+            g_config.candSelBgColor = cc.rgbResult;
+            // 自动计算高亮文字色：暗背景用白字，亮背景用黑字
+            int r = GetRValue(cc.rgbResult);
+            int g = GetGValue(cc.rgbResult);
+            int b = GetBValue(cc.rgbResult);
+            int luminance = (r * 299 + g * 587 + b * 114) / 1000;
+            g_config.candSelTextColor =
+                (luminance < 128) ? RGB(255, 255, 255) : RGB(0, 0, 0);
+          }
+          return 0;
+        }
         case ID_BTN_RESET:
           _ResetToDefault();
           return 0;
