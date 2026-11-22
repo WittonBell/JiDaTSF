@@ -54,7 +54,7 @@ struct JiDaConfig {
   bool candFontItalic = false;
   COLORREF candBgColor = RGB(255, 255, 255);
   COLORREF candTextColor = RGB(0, 0, 0);
-  COLORREF candSelBgColor = RGB(0, 120, 215);
+  COLORREF candSelBgColor = RGB(251, 255, 247);
   COLORREF candSelTextColor = RGB(255, 255, 255);
 
   wchar_t wildcardChar = L'z';
