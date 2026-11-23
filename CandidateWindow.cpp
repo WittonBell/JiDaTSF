@@ -304,7 +304,6 @@ LRESULT CCandidateWindow::_OnPaint() {
     }
   }
 
-
   SelectObject(mem, oldF);
   BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
   SelectObject(mem, oldB);

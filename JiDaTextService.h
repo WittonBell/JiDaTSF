@@ -41,6 +41,7 @@ class CJiDaTextService : public ITfTextInputProcessor,
   void _CommitAndEnd(ITfContext* pic, const std::wstring& text);
   void _EnsureComposition(ITfContext* pic);
   void _SyncComposition(ITfContext* pic);
+  void _GetHostCaret(ITfContext* pic, RECT& rcCaret);
   void _ShowCandidates(ITfContext* pic);
   void _HideCandidates();
   void _Cancel();

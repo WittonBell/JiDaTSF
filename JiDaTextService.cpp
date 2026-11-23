@@ -813,18 +813,7 @@ void CJiDaTextService::_SyncComposition(ITfContext* pic) {
   s->Release();
 }
 
-void CJiDaTextService::_ShowCandidates(ITfContext* pic) {
-  if (!_candWnd)
-    return;
-
-  if (_engine.Buffer().empty()) {
-    _candWnd->Hide();
-    return;
-  }
-
-  _candWnd->SetTitle(_engine.Buffer());
-
-  RECT rcCaret = {};
+void CJiDaTextService::_GetHostCaret(ITfContext* pic, RECT& rcCaret) {
   bool bPositioned = false;
 
   // 创建 Edit Session
@@ -866,6 +855,21 @@ void CJiDaTextService::_ShowCandidates(ITfContext* pic) {
       rcCaret.bottom = rcCaret.top + 1;
     }
   }
+}
+
+void CJiDaTextService::_ShowCandidates(ITfContext* pic) {
+  if (!_candWnd)
+    return;
+
+  if (_engine.Buffer().empty()) {
+    _candWnd->Hide();
+    return;
+  }
+
+  _candWnd->SetTitle(_engine.Buffer());
+
+  RECT rcCaret = {};
+  _GetHostCaret(pic, rcCaret);
 
   UINT dpi = GetDpiForRect(rcCaret);
   _candWnd->Show(_engine.Candidates(), _engine.SelectedIndex(), rcCaret, dpi);
@@ -879,31 +883,14 @@ void CJiDaTextService::_ShowTempEnglish(ITfContext* pic) {
     return;
   }
 
-  _candWnd->SetTitle(L"英文");
+  _candWnd->SetTitle(_tempEnglishBuffer);
 
   std::vector<CandidateItem> items;
-  items.push_back({_tempEnglishBuffer, L""});
+  //items.push_back({_tempEnglishBuffer, L""});
 
-  RECT rcCaret = {0, 0, 0, 0};
-  ITfContextView* view = nullptr;
-  if (SUCCEEDED(pic->GetActiveView(&view)) && view) {
-    ITfRange* range = nullptr;
-    TF_SELECTION sel;
-    ULONG n = 0;
-    if (SUCCEEDED(pic->GetSelection(TF_INVALID_EDIT_COOKIE,
-                                    TF_DEFAULT_SELECTION, 1, &sel, &n)) &&
-        n)
-      range = sel.range;
-    if (range) {
-      RECT r;
-      BOOL clipped = FALSE;
-      view->GetTextExt(TF_INVALID_EDIT_COOKIE, range, &r, &clipped);
-      if (r.right > r.left || r.bottom > r.top)
-        rcCaret = r;
-      range->Release();
-    }
-    view->Release();
-  }
+  RECT rcCaret = {};
+  _GetHostCaret(pic, rcCaret);
+
   UINT dpi = GetDpiForRect(rcCaret);
   _candWnd->Show(items, 0, rcCaret, dpi);
 }
