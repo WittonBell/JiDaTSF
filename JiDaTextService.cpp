@@ -241,7 +241,7 @@ STDMETHODIMP CJiDaTextService::OnSetFocus(BOOL) {
   return S_OK;
 }
 
-STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
+STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
                                              WPARAM wParam,
                                              LPARAM,
                                              BOOL* pfEaten) {
@@ -291,6 +291,19 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
     if (g_config.shiftDirectCommit)
       return S_OK;    // 开关打开 → 宿主输出大写
     *pfEaten = TRUE;  // 开关关闭 → 进入临时英文（在 OnKeyDown 处理）
+    return S_OK;
+  }
+
+  // 右Shift键切换中英文
+  if ((GetKeyState(VK_RSHIFT) & 0x8000) != 0) {
+    _OnStatusCommand(StatusCommand::ToggleChinese);
+    if (!_status.chinese) {
+      // 如果不再是中文模式，但有候选框，则关闭
+      if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
+        _CancelWithContext(pic);
+        _HideCandidates();
+      }
+    }
     return S_OK;
   }
 
