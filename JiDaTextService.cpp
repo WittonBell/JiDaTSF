@@ -276,6 +276,11 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
         wParam == VK_SPACE || wParam == VK_BACK || wParam == VK_RETURN ||
         wParam == VK_ESCAPE) {
       *pfEaten = TRUE;
+    } else if (wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
+               wParam == VK_OEM_1 || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
+               wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
+               wParam == VK_OEM_7) {
+      *pfEaten = TRUE;
     }
     return S_OK;
   }
@@ -453,6 +458,19 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
         _ShowTempEnglish(pic);
       }
       return S_OK;
+    }
+    // ---------------- 标点处理 ----------------
+    bool isPunctKey =
+        (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
+         wParam == VK_OEM_PERIOD || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
+         wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
+         wParam == VK_OEM_7);
+    if (isPunctKey) {
+      wchar_t ch = VkToChar(wParam, lParam);
+      if (ch) {
+        _tempEnglishBuffer += ch;
+        _ShowTempEnglish(pic);
+      }
     }
     return S_OK;
   }
@@ -886,7 +904,7 @@ void CJiDaTextService::_ShowTempEnglish(ITfContext* pic) {
   _candWnd->SetTitle(_tempEnglishBuffer);
 
   std::vector<CandidateItem> items;
-  //items.push_back({_tempEnglishBuffer, L""});
+  // items.push_back({_tempEnglishBuffer, L""});
 
   RECT rcCaret = {};
   _GetHostCaret(pic, rcCaret);
