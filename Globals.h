@@ -5,8 +5,8 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 extern HINSTANCE g_hInstance;
@@ -43,8 +43,10 @@ struct JiDaConfig {
   bool gbkExt = true;
   bool inlinePreedit = false;
   bool showStatusBar = true;
+  // Shift 直接上屏
+  bool shiftDirectCommit = false;
 
-  CandLayout candLayout = CandLayout::Vertical;
+  CandLayout candLayout = CandLayout::Horizontal;
   int candPageSize = 9;
 
   // 候选框外观

@@ -59,4 +59,5 @@ class CSettingWindow {
   HWND _btnBgClr = nullptr;
   HWND _btnSelClr = nullptr;
   HWND _lblFont = nullptr;
+  HWND _chkShiftDirect = nullptr;
 };

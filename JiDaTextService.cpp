@@ -247,21 +247,20 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
                                              BOOL* pfEaten) {
   *pfEaten = FALSE;
 
-  // 1. 造词窗口可见 → 独占全部按键
+  // 1. 造词窗口可见 → 独占
   if (_phraseWnd && _phraseWnd->IsVisible()) {
     *pfEaten = TRUE;
     return S_OK;
   }
 
-  // 2. Ctrl+= → 造词窗口（只此一个 Ctrl 组合被输入法接管）
-  if ((GetKeyState(VK_CONTROL) & 0x8000) &&
+  // 2. Ctrl+= → 造词（临时英文模式下不接管）
+  if (!_tempEnglishMode && (GetKeyState(VK_CONTROL) & 0x8000) &&
       (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
     *pfEaten = TRUE;
     return S_OK;
   }
 
-  // 3. Ctrl / Alt / Win 组合键 → 全部交给宿主，保证 Ctrl+S、Ctrl+A、
-  //    Ctrl+Z、Alt+Tab、Win+R 等系统与宿主快捷键正常生效
+  // 3. Ctrl / Alt / Win 组合键 → 交给宿主
   if (GetKeyState(VK_CONTROL) & 0x8000)
     return S_OK;
   if (GetKeyState(VK_MENU) & 0x8000)
@@ -271,7 +270,26 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
   if (GetKeyState(VK_RWIN) & 0x8000)
     return S_OK;
 
-  // 4. 英文模式
+  // 4. 临时英文模式：吞下字母 / 数字 / 空格 / 退格 / 回车 / ESC
+  if (_tempEnglishMode) {
+    if ((wParam >= 'A' && wParam <= 'Z') || (wParam >= '0' && wParam <= '9') ||
+        wParam == VK_SPACE || wParam == VK_BACK || wParam == VK_RETURN ||
+        wParam == VK_ESCAPE) {
+      *pfEaten = TRUE;
+    }
+    return S_OK;
+  }
+
+  // 5. Shift + 字母
+  bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+  if (shift && wParam >= 'A' && wParam <= 'Z') {
+    if (g_config.shiftDirectCommit)
+      return S_OK;    // 开关打开 → 宿主输出大写
+    *pfEaten = TRUE;  // 开关关闭 → 进入临时英文（在 OnKeyDown 处理）
+    return S_OK;
+  }
+
+  // 6. 英文模式
   if (!_status.chinese) {
     if (_status.fullShape) {
       bool eat = false;
@@ -291,11 +309,6 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
     }
     return S_OK;
   }
-
-  // 5. 中文模式
-  bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-  if (shift && wParam >= 'A' && wParam <= 'Z')
-    return S_OK;
 
   bool hasInput = !_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount();
   bool hasCand = !_engine.Candidates().empty();
@@ -332,19 +345,14 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
       *pfEaten = TRUE;
     return S_OK;
   }
-
   // 标点键：有编码 / 中文标点 / 全角 —— 任意一项为真都要吞
-  bool isPunctKey =
-      (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
-       wParam == VK_OEM_PERIOD || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
-       wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
-       wParam == VK_OEM_7);
-  if (isPunctKey) {
+  if (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
+      wParam == VK_OEM_2 || wParam == VK_OEM_3 || wParam == VK_OEM_4 ||
+      wParam == VK_OEM_5 || wParam == VK_OEM_6 || wParam == VK_OEM_7) {
     if (hasInput || _status.chinesePunctuation || _status.fullShape)
       *pfEaten = TRUE;
     return S_OK;
   }
-
   return S_OK;
 }
 
@@ -380,30 +388,94 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 造词窗口可见：把按键转给它，不让其他逻辑介入
+  // 1. 造词窗口可见 → 独占
   if (_phraseWnd && _phraseWnd->IsVisible()) {
     *pfEaten = TRUE;
     _phraseWnd->HandleKey(wParam);
     return S_OK;
   }
 
-  // Ctrl + 加号：弹出 / 关闭造词窗口
-  if ((GetKeyState(VK_CONTROL) & 0x8000) &&
-      (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
+  // 2. Ctrl / Alt / Win 修饰键放行（Ctrl+= 除外）
+  if (GetKeyState(VK_CONTROL) & 0x8000) {
+    // Ctrl + 加号：弹出 / 关闭造词窗口
+    if (!_tempEnglishMode && (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
+      *pfEaten = TRUE;
+      _ShowPhraseWindow(pic);
+    }
+    return S_OK;
+  }
+  if (GetKeyState(VK_MENU) & 0x8000)
+    return S_OK;
+  if (GetKeyState(VK_LWIN) & 0x8000)
+    return S_OK;
+  if (GetKeyState(VK_RWIN) & 0x8000)
+    return S_OK;
+
+  // 3. 临时英文模式处理
+  if (_tempEnglishMode) {
     *pfEaten = TRUE;
-    _ShowPhraseWindow(pic);
+
+    if (wParam == VK_RETURN) {
+      if (!_tempEnglishBuffer.empty())
+        _CommitAndEnd(pic, _tempEnglishBuffer);
+      _tempEnglishBuffer.clear();
+      _tempEnglishMode = false;
+      _HideCandidates();
+      return S_OK;
+    }
+    if (wParam == VK_ESCAPE) {
+      _tempEnglishBuffer.clear();
+      _tempEnglishMode = false;
+      _HideCandidates();
+      return S_OK;
+    }
+    if (wParam == VK_BACK) {
+      if (!_tempEnglishBuffer.empty()) {
+        _tempEnglishBuffer.pop_back();
+        if (_tempEnglishBuffer.empty()) {
+          _tempEnglishMode = false;
+          _HideCandidates();
+        } else {
+          _ShowTempEnglish(pic);
+        }
+      }
+      return S_OK;
+    }
+    if (wParam == VK_SPACE) {
+      _tempEnglishBuffer += L' ';
+      _ShowTempEnglish(pic);
+      return S_OK;
+    }
+    if ((wParam >= 'A' && wParam <= 'Z') || (wParam >= '0' && wParam <= '9')) {
+      wchar_t ch = VkToChar(wParam, lParam);
+      if (ch) {
+        _tempEnglishBuffer += ch;
+        _ShowTempEnglish(pic);
+      }
+      return S_OK;
+    }
     return S_OK;
   }
 
-  // Ctrl / Alt / Win 组合键交给宿主
-  if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000) ||
-      (GetKeyState(VK_LWIN) & 0x8000) || (GetKeyState(VK_RWIN) & 0x8000)) {
-    return S_OK;  // pfEaten 保持 FALSE
-  }
-
+  // 4.Shift + 字母：开关关闭时进入临时英文
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-  if (shift && wParam >= 'A' && wParam <= 'Z')
+  if (shift && wParam >= 'A' && wParam <= 'Z') {
+    if (g_config.shiftDirectCommit)
+      return S_OK;  // 宿主输出大写
+    // 进入临时英文（先清空已有编码）
+    if (!_engine.Buffer().empty()) {
+      _CancelWithContext(pic);
+      _HideCandidates();
+    }
+    _tempEnglishMode = true;
+    _tempEnglishBuffer.clear();
+    wchar_t ch = VkToChar(wParam, lParam);
+    if (ch)
+      _tempEnglishBuffer += ch;
+    *pfEaten = TRUE;
+    _ShowTempEnglish(pic);
     return S_OK;
+  }
 
   // 上下键：竖向布局时移动选中，横向布局时翻页
   if (wParam == VK_UP || wParam == VK_DOWN) {
@@ -799,6 +871,43 @@ void CJiDaTextService::_ShowCandidates(ITfContext* pic) {
   _candWnd->Show(_engine.Candidates(), _engine.SelectedIndex(), rcCaret, dpi);
 }
 
+void CJiDaTextService::_ShowTempEnglish(ITfContext* pic) {
+  if (!_candWnd)
+    return;
+  if (_tempEnglishBuffer.empty()) {
+    _candWnd->Hide();
+    return;
+  }
+
+  _candWnd->SetTitle(L"英文");
+
+  std::vector<CandidateItem> items;
+  items.push_back({_tempEnglishBuffer, L""});
+
+  RECT rcCaret = {0, 0, 0, 0};
+  ITfContextView* view = nullptr;
+  if (SUCCEEDED(pic->GetActiveView(&view)) && view) {
+    ITfRange* range = nullptr;
+    TF_SELECTION sel;
+    ULONG n = 0;
+    if (SUCCEEDED(pic->GetSelection(TF_INVALID_EDIT_COOKIE,
+                                    TF_DEFAULT_SELECTION, 1, &sel, &n)) &&
+        n)
+      range = sel.range;
+    if (range) {
+      RECT r;
+      BOOL clipped = FALSE;
+      view->GetTextExt(TF_INVALID_EDIT_COOKIE, range, &r, &clipped);
+      if (r.right > r.left || r.bottom > r.top)
+        rcCaret = r;
+      range->Release();
+    }
+    view->Release();
+  }
+  UINT dpi = GetDpiForRect(rcCaret);
+  _candWnd->Show(items, 0, rcCaret, dpi);
+}
+
 void CJiDaTextService::_HideCandidates() {
   if (_candWnd)
     _candWnd->Hide();
@@ -810,10 +919,11 @@ void CJiDaTextService::_Cancel() {
     _composition = nullptr;
   }
   _engine.Reset();
+  _tempEnglishMode = false;
+  _tempEnglishBuffer.clear();
 }
 
 void CJiDaTextService::_CancelWithContext(ITfContext* pic) {
-  // 结束组合（提交空文本）——纯 Release 只减引用，不会把组合从文档里摘掉
   if (_composition) {
     auto* s = new CCommitSession(pic, _composition, L"");
     pic->RequestEditSession(_clientId, s, TF_ES_SYNC | TF_ES_READWRITE,
@@ -823,6 +933,8 @@ void CJiDaTextService::_CancelWithContext(ITfContext* pic) {
     _composition = nullptr;
   }
   _engine.Reset();
+  _tempEnglishMode = false;
+  _tempEnglishBuffer.clear();
 }
 
 STDMETHODIMP CJiDaTextService::OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) {
@@ -833,6 +945,8 @@ STDMETHODIMP CJiDaTextService::OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) {
     _activeCtx = nullptr;
     _singleQuoteOpen = false;
     _doubleQuoteOpen = false;
+    _tempEnglishMode = false;
+    _tempEnglishBuffer.clear();
   }
   return S_OK;
 }

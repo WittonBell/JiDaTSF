@@ -2,11 +2,11 @@
 #include <msctf.h>
 #include "CandidateWindow.h"
 #include "Config.h"
+#include "Converter.h"
 #include "Globals.h"
 #include "JiDaEngine.h"
 #include "PhraseWindow.h"
 #include "StatusWindow.h"
-#include "Converter.h"
 
 class CJiDaTextService : public ITfTextInputProcessor,
                          public ITfKeyEventSink,
@@ -74,4 +74,8 @@ class CJiDaTextService : public ITfTextInputProcessor,
   bool _singleQuoteOpen = false;           // ' 是否已输出过左引号
   bool _doubleQuoteOpen = false;           // " 是否已输出过左引号
   std::wstring _ProcessQuote(wchar_t ch);  // 引号配对处理
+
+  bool _tempEnglishMode = false;
+  std::wstring _tempEnglishBuffer;
+  void _ShowTempEnglish(ITfContext* pic);
 };

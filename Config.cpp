@@ -80,6 +80,8 @@ void LoadJiDaConfig() {
   g_config.gbkExt = ReadBool(in, L"GbkExt", g_config.gbkExt);
   g_config.inlinePreedit =
       ReadBool(in, L"InlinePreedit", g_config.inlinePreedit);
+  g_config.shiftDirectCommit =
+      ReadBool(in, L"ShiftDirectCommit", g_config.shiftDirectCommit);
 
   const wchar_t* DP = L"Display";
   int vert = ReadInt(DP, L"Vertical",
@@ -123,6 +125,7 @@ void SaveJiDaConfig() {
   WriteBool(in, L"PerKeyHint", g_config.perKeyHint);
   WriteBool(in, L"GbkExt", g_config.gbkExt);
   WriteBool(in, L"InlinePreedit", g_config.inlinePreedit);
+  WriteBool(in, L"ShiftDirectCommit", g_config.shiftDirectCommit);
 
   const wchar_t* DP = L"Display";
   WriteInt(DP, L"Vertical",

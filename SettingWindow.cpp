@@ -27,7 +27,8 @@ enum : int {
   ID_BTN_FONT,
   ID_BTN_TEXTCLR,
   ID_BTN_BGCLR,
-  ID_BTN_SELCLR
+  ID_BTN_SELCLR,
+  ID_CHK_SHIFT_DIRECT
 };
 constexpr wchar_t kClass[] = L"JiDa.SettingWindow";
 }  // namespace
@@ -210,6 +211,8 @@ void CSettingWindow::_Layout() {
       _MkCheck(L"分号选第二重码", 185, 32, 150, ID_SEMI_SECOND, true);
   _chkPerKey = _MkCheck(L"逐键提示", 185, 56, 150, ID_PERKEY_HINT, true);
   _chkInline = _MkCheck(L"嵌入预编辑", 185, 80, 150, ID_INLINE_PREEDIT, false);
+  _chkShiftDirect =
+      _MkCheck(L"Shift 直接上屏", 185, 104, 150, ID_CHK_SHIFT_DIRECT, true);
 
   // ===== 显示选项 =====
   HWND g2 = _MkGroup(L"显示选项", 10, 145, 340, 140);
@@ -248,6 +251,7 @@ void CSettingWindow::_Layout() {
                 _chkPunctTop,
                 _chkPerKey,
                 _chkInline,
+                _chkShiftDirect,
                 _chkShowBar,
                 _radVert,
                 _radHorz,
@@ -280,6 +284,8 @@ void CSettingWindow::_LoadFromConfig() {
   SendMessageW(_chkPerKey, BM_SETCHECK, g_config.perKeyHint ? 1 : 0, 0);
   SendMessageW(_chkInline, BM_SETCHECK, g_config.inlinePreedit ? 1 : 0, 0);
   SendMessageW(_chkShowBar, BM_SETCHECK, g_config.showStatusBar ? 1 : 0, 0);
+  SendMessageW(_chkShiftDirect, BM_SETCHECK, g_config.shiftDirectCommit ? 1 : 0,
+               0);
 
   SendMessageW(_radVert, BM_SETCHECK,
                g_config.candLayout == CandLayout::Vertical ? 1 : 0, 0);
@@ -312,6 +318,8 @@ void CSettingWindow::_SaveToConfig() {
       SendMessageW(_chkInline, BM_GETCHECK, 0, 0) == BST_CHECKED;
   g_config.showStatusBar =
       SendMessageW(_chkShowBar, BM_GETCHECK, 0, 0) == BST_CHECKED;
+  g_config.shiftDirectCommit =
+      SendMessageW(_chkShiftDirect, BM_GETCHECK, 0, 0) == BST_CHECKED;
 
   bool vert = SendMessageW(_radVert, BM_GETCHECK, 0, 0) == BST_CHECKED;
   g_config.candLayout = vert ? CandLayout::Vertical : CandLayout::Horizontal;
@@ -335,6 +343,7 @@ void CSettingWindow::_ResetToDefault() {
                d.candLayout == CandLayout::Vertical ? 1 : 0, 0);
   SendMessageW(_radHorz, BM_SETCHECK,
                d.candLayout == CandLayout::Horizontal ? 1 : 0, 0);
+  SendMessageW(_chkShiftDirect, BM_SETCHECK, d.shiftDirectCommit ? 1 : 0, 0);
 
   wchar_t buf[8];
   swprintf_s(buf, L"%d", d.candPageSize);
