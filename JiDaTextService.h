@@ -70,4 +70,8 @@ class CJiDaTextService : public ITfTextInputProcessor,
   InputStatus _status;
   std::unique_ptr<CPhraseWindow> _phraseWnd;
   void _ShowPhraseWindow(ITfContext* pic);
+
+  bool _singleQuoteOpen = false;           // ' 是否已输出过左引号
+  bool _doubleQuoteOpen = false;           // " 是否已输出过左引号
+  std::wstring _ProcessQuote(wchar_t ch);  // 引号配对处理
 };

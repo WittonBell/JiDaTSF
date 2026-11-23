@@ -247,18 +247,31 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
                                              BOOL* pfEaten) {
   *pfEaten = FALSE;
 
+  // 1. 造词窗口可见 → 独占全部按键
   if (_phraseWnd && _phraseWnd->IsVisible()) {
     *pfEaten = TRUE;
     return S_OK;
   }
 
+  // 2. Ctrl+= → 造词窗口（只此一个 Ctrl 组合被输入法接管）
   if ((GetKeyState(VK_CONTROL) & 0x8000) &&
       (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
     *pfEaten = TRUE;
     return S_OK;
   }
 
-  // ---------------- 英文模式 ----------------
+  // 3. Ctrl / Alt / Win 组合键 → 全部交给宿主，保证 Ctrl+S、Ctrl+A、
+  //    Ctrl+Z、Alt+Tab、Win+R 等系统与宿主快捷键正常生效
+  if (GetKeyState(VK_CONTROL) & 0x8000)
+    return S_OK;
+  if (GetKeyState(VK_MENU) & 0x8000)
+    return S_OK;
+  if (GetKeyState(VK_LWIN) & 0x8000)
+    return S_OK;
+  if (GetKeyState(VK_RWIN) & 0x8000)
+    return S_OK;
+
+  // 4. 英文模式
   if (!_status.chinese) {
     if (_status.fullShape) {
       bool eat = false;
@@ -279,7 +292,7 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
     return S_OK;
   }
 
-  // ---------------- 中文模式 ----------------
+  // 5. 中文模式
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift && wParam >= 'A' && wParam <= 'Z')
     return S_OK;
@@ -350,7 +363,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   _activeCtx = pic;
   _activeCtx->AddRef();
 
-      // ---------------- 英文模式 ----------------
+  // ---------------- 英文模式 ----------------
   if (!_status.chinese) {
     if (_status.fullShape) {
       wchar_t ch = 0;
@@ -367,7 +380,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-      // 造词窗口可见：把按键转给它，不让其他逻辑介入
+  // 造词窗口可见：把按键转给它，不让其他逻辑介入
   if (_phraseWnd && _phraseWnd->IsVisible()) {
     *pfEaten = TRUE;
     _phraseWnd->HandleKey(wParam);
@@ -380,6 +393,12 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     *pfEaten = TRUE;
     _ShowPhraseWindow(pic);
     return S_OK;
+  }
+
+  // Ctrl / Alt / Win 组合键交给宿主
+  if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000) ||
+      (GetKeyState(VK_LWIN) & 0x8000) || (GetKeyState(VK_RWIN) & 0x8000)) {
+    return S_OK;  // pfEaten 保持 FALSE
   }
 
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
@@ -558,7 +577,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-      // ---------------- 标点处理 ----------------
+  // ---------------- 标点处理 ----------------
   bool isPunctKey =
       (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
        wParam == VK_OEM_PERIOD || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
@@ -577,10 +596,14 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
         _CancelWithContext(pic);
 
       std::wstring outputPunct;
-      if (_status.chinesePunctuation)
-        outputPunct = punct;  // 中文标点
-      else
-        outputPunct = std::wstring(1, ch);  // ASCII，_CommitAndEnd 会按全角化
+      if (_status.chinesePunctuation) {
+        if (ch == L'\'' || ch == L'"')
+          outputPunct = _ProcessQuote(ch);  // 引号配对
+        else
+          outputPunct = punct;  // 其他标点用映射表
+      } else {
+        outputPunct = std::wstring(1, ch);  // 半角
+      }
 
       _CommitAndEnd(pic, outputPunct);
       _engine.Reset();
@@ -598,16 +621,20 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
       *pfEaten = TRUE;
       std::wstring output;
       if (_status.chinesePunctuation) {
-        bool found = false;
-        for (auto& p : g_punctMap) {
-          if (p.first == ch) {
-            output = p.second;
-            found = true;
-            break;
+        if (ch == L'\'' || ch == L'"') {
+          output = _ProcessQuote(ch);  // 引号配对
+        } else {
+          bool found = false;
+          for (auto& p : g_punctMap) {
+            if (p.first == ch) {
+              output = p.second;
+              found = true;
+              break;
+            }
           }
+          if (!found)
+            output = std::wstring(1, ch);
         }
-        if (!found)
-          output = std::wstring(1, ch);
       } else {
         output = std::wstring(1, ch);  // 英文标点交给 _CommitAndEnd 全角化
       }
@@ -804,6 +831,8 @@ STDMETHODIMP CJiDaTextService::OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) {
   if (_activeCtx) {
     _activeCtx->Release();
     _activeCtx = nullptr;
+    _singleQuoteOpen = false;
+    _doubleQuoteOpen = false;
   }
   return S_OK;
 }
@@ -1025,4 +1054,24 @@ void CJiDaTextService::_ShowPhraseWindow(ITfContext* pic) {
 
         _engine.ClearRecentCommits();
       });
+}
+
+std::wstring CJiDaTextService::_ProcessQuote(wchar_t ch) {
+  if (ch == L'\'') {
+    if (_singleQuoteOpen) {
+      _singleQuoteOpen = false;
+      return L"’";  // 右单引号
+    }
+    _singleQuoteOpen = true;
+    return L"‘";  // 左单引号
+  }
+  if (ch == L'"') {
+    if (_doubleQuoteOpen) {
+      _doubleQuoteOpen = false;
+      return L"”";  // 右双引号
+    }
+    _doubleQuoteOpen = true;
+    return L"“";  // 左双引号
+  }
+  return std::wstring(1, ch);
 }
