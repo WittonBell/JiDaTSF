@@ -6,6 +6,7 @@
 #include "JiDaEngine.h"
 #include "PhraseWindow.h"
 #include "StatusWindow.h"
+#include "Converter.h"
 
 class CJiDaTextService : public ITfTextInputProcessor,
                          public ITfKeyEventSink,

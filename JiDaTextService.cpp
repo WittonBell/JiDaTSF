@@ -245,30 +245,41 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
                                              WPARAM wParam,
                                              LPARAM,
                                              BOOL* pfEaten) {
-  if ((GetKeyState(VK_CONTROL) & 0x8000) &&
-      (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
-    *pfEaten = TRUE;
-    return S_OK;
-  }
-
   *pfEaten = FALSE;
-  // 英文模式：任何按键都交给宿主处理
-  if (!_status.chinese)
-    return S_OK;
 
-  // 造词窗口可见时独占全部按键
   if (_phraseWnd && _phraseWnd->IsVisible()) {
     *pfEaten = TRUE;
     return S_OK;
   }
 
-  // Ctrl + 加号：吞掉，由 OnKeyDown 弹出造词窗口
   if ((GetKeyState(VK_CONTROL) & 0x8000) &&
       (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
     *pfEaten = TRUE;
     return S_OK;
   }
 
+  // ---------------- 英文模式 ----------------
+  if (!_status.chinese) {
+    if (_status.fullShape) {
+      bool eat = false;
+      if (wParam >= 'A' && wParam <= 'Z')
+        eat = true;
+      else if (wParam >= '0' && wParam <= '9')
+        eat = true;
+      else if (wParam == VK_SPACE)
+        eat = true;
+      else if (wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
+               wParam == VK_OEM_1 || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
+               wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
+               wParam == VK_OEM_7)
+        eat = true;
+      if (eat)
+        *pfEaten = TRUE;
+    }
+    return S_OK;
+  }
+
+  // ---------------- 中文模式 ----------------
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift && wParam >= 'A' && wParam <= 'Z')
     return S_OK;
@@ -302,24 +313,25 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext*,
     return S_OK;
   }
   // 翻页
-  if (wParam == VK_PRIOR || wParam == VK_NEXT) {
+  if (wParam == VK_PRIOR || wParam == VK_NEXT || wParam == VK_OEM_MINUS ||
+      wParam == VK_OEM_PLUS) {
     if (hasInput && hasCand)
       *pfEaten = TRUE;
     return S_OK;
   }
-  if (wParam == VK_OEM_MINUS || wParam == VK_OEM_PLUS) {
-    if (hasInput && hasCand)
+
+  // 标点键：有编码 / 中文标点 / 全角 —— 任意一项为真都要吞
+  bool isPunctKey =
+      (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
+       wParam == VK_OEM_PERIOD || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
+       wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
+       wParam == VK_OEM_7);
+  if (isPunctKey) {
+    if (hasInput || _status.chinesePunctuation || _status.fullShape)
       *pfEaten = TRUE;
     return S_OK;
   }
-  // 标点 / 分号
-  if (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
-      wParam == VK_OEM_2 || wParam == VK_OEM_3 || wParam == VK_OEM_4 ||
-      wParam == VK_OEM_5 || wParam == VK_OEM_6 || wParam == VK_OEM_7) {
-    if (hasInput)
-      *pfEaten = TRUE;
-    return S_OK;
-  }
+
   return S_OK;
 }
 
@@ -337,6 +349,23 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   }
   _activeCtx = pic;
   _activeCtx->AddRef();
+
+      // ---------------- 英文模式 ----------------
+  if (!_status.chinese) {
+    if (_status.fullShape) {
+      wchar_t ch = 0;
+      if (wParam == VK_SPACE) {
+        ch = L' ';
+      } else {
+        ch = VkToChar(wParam, lParam);  // 已处理 Shift 大小写
+      }
+      if (ch) {
+        *pfEaten = TRUE;
+        _CommitAndEnd(pic, std::wstring(1, ch));
+      }
+    }
+    return S_OK;
+  }
 
       // 造词窗口可见：把按键转给它，不让其他逻辑介入
   if (_phraseWnd && _phraseWnd->IsVisible()) {
@@ -511,7 +540,6 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
       _CancelWithContext(pic);
       _HideCandidates();
     }
-    return S_OK;
   }
 
   // 日期/金额等待态下的数字/点
@@ -530,7 +558,14 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 标点顶屏：用真实字符，不传 VK 码
+      // ---------------- 标点处理 ----------------
+  bool isPunctKey =
+      (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
+       wParam == VK_OEM_PERIOD || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
+       wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
+       wParam == VK_OEM_7);
+
+  // 情况 1：有编码 -> 顶字上屏后输出标点
   if (!_engine.Buffer().empty()) {
     wchar_t ch = VkToChar(wParam, lParam);
     std::wstring punct, firstCand;
@@ -540,14 +575,48 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
         _CommitAndEnd(pic, firstCand);
       else
         _CancelWithContext(pic);
-      _CommitAndEnd(pic, punct);
+
+      std::wstring outputPunct;
+      if (_status.chinesePunctuation)
+        outputPunct = punct;  // 中文标点
+      else
+        outputPunct = std::wstring(1, ch);  // ASCII，_CommitAndEnd 会按全角化
+
+      _CommitAndEnd(pic, outputPunct);
       _engine.Reset();
       _HideCandidates();
       return S_OK;
     }
-    _CancelWithContext(pic);
-    _HideCandidates();
+    // 非映射标点（如 Shift+, 得到 '<'）：保留编码，按键交给宿主
+    return S_OK;
   }
+
+  // 情况 2：无编码但中文标点或全角 -> 直接输出转换后的标点
+  if (isPunctKey && (_status.chinesePunctuation || _status.fullShape)) {
+    wchar_t ch = VkToChar(wParam, lParam);
+    if (ch) {
+      *pfEaten = TRUE;
+      std::wstring output;
+      if (_status.chinesePunctuation) {
+        bool found = false;
+        for (auto& p : g_punctMap) {
+          if (p.first == ch) {
+            output = p.second;
+            found = true;
+            break;
+          }
+        }
+        if (!found)
+          output = std::wstring(1, ch);
+      } else {
+        output = std::wstring(1, ch);  // 英文标点交给 _CommitAndEnd 全角化
+      }
+      _CommitAndEnd(pic, output);
+      return S_OK;
+    }
+  }
+
+  // 情况 3：英文标点半角、或非标点键 -> 交给宿主
   return S_OK;
 }
 
@@ -585,29 +654,28 @@ void CJiDaTextService::_CommitAndEnd(ITfContext* pic,
     return;
   }
 
-  // 记录上屏历史（供 Ctrl+= 造词）
-  // 此时 _engine.Buffer() 已被 OnSpace/OnDigit/OnLetter 内部 Reset 清空，
-  // 必须用 CommitText 里存档的 LastCommittedCode()
+  // 记录上屏历史（用原文，便于用户词复用；转换只在最终输出时做）
   std::wstring code = _engine.LastCommittedCode();
   if (!code.empty()) {
     _engine.OnCommitted(code, text);
-    wchar_t dbg[200];
-    swprintf_s(dbg, L"[JiDa] Commit recorded: %ls -> %ls (history=%zu)\n",
-               code.c_str(), text.c_str(), _engine.GetRecentCommits().size());
-    OutputDebugStringW(dbg);
   }
 
-  auto* s = new CCommitSession(pic, _composition, text);
+  // 简繁 + 全半角
+  std::wstring output =
+      ConvertText(text, _status.traditional, _status.fullShape);
+
+  auto* s = new CCommitSession(pic, _composition, output);
   HRESULT phrSession = E_FAIL;
   HRESULT hr = pic->RequestEditSession(
       _clientId, s, TF_ES_SYNC | TF_ES_READWRITE, &phrSession);
   s->Release();
 
-  wchar_t buf[256];
-  swprintf_s(buf, L"[JiDa] Commit hr=0x%08X phr=0x%08X hasComp=%d text=%ls\n",
+  wchar_t dbg[256];
+  swprintf_s(dbg,
+             L"[JiDa] Commit hr=0x%08X phr=0x%08X hasComp=%d src=%ls out=%ls\n",
              (unsigned)hr, (unsigned)phrSession, _composition ? 1 : 0,
-             text.c_str());
-  OutputDebugStringW(buf);
+             text.c_str(), output.c_str());
+  OutputDebugStringW(dbg);
 
   if (_composition) {
     _composition->Release();

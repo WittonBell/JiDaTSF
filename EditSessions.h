@@ -85,9 +85,7 @@ class CCommitSession : public ITfEditSession {
   }
 
   STDMETHODIMP DoEditSession(TfEditCookie ec) override {
-    bool done = false;
-
-    // 优先走组合：有组合时把 range 文本替换成要提交的汉字，再结束组合
+    // ---------- 1. 有组合：替换组合文本 + 结束组合 ----------
     if (_comp) {
       ITfRange* r = nullptr;
       if (SUCCEEDED(_comp->GetRange(&r)) && r) {
@@ -95,26 +93,56 @@ class CCommitSession : public ITfEditSession {
         r->Release();
         if (SUCCEEDED(hrSet)) {
           HRESULT hrEnd = _comp->EndComposition(ec);
+          OutputDebugStringW(SUCCEEDED(hrEnd)
+                                 ? L"[JiDa] Commit: composition ended OK\n"
+                                 : L"[JiDa] Commit: EndComposition FAILED\n");
           if (SUCCEEDED(hrEnd))
-            done = true;
+            return S_OK;
         }
       }
     }
 
-    // 回退：无组合或组合提交失败，直接插入文本
-    if (!done) {
-      ITfInsertAtSelection* ins = nullptr;
-      if (SUCCEEDED(
-              _ctx->QueryInterface(IID_ITfInsertAtSelection, (void**)&ins))) {
-        // 关键：TF_IAS_NOQUERY 是真正插入，不是查询
-        HRESULT hrIns = ins->InsertTextAtSelection(
-            ec, TF_IAS_NOQUERY, _text.c_str(), (LONG)_text.size(), nullptr);
-        ins->Release();
-        done = SUCCEEDED(hrIns);
+    // ---------- 2. 无组合：用当前 selection range 插入（最稳） ----------
+    TF_SELECTION sel = {};
+    ULONG n = 0;
+    if (SUCCEEDED(_ctx->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &n)) &&
+        n > 0 && sel.range) {
+      HRESULT hrSet =
+          sel.range->SetText(ec, 0, _text.c_str(), (LONG)_text.size());
+      if (SUCCEEDED(hrSet)) {
+        // 光标移到插入文本之后，避免下次插入覆盖
+        sel.range->Collapse(ec, TF_ANCHOR_END);
+        sel.style.ase = TF_AE_NONE;
+        sel.style.fInterimChar = FALSE;
+        _ctx->SetSelection(ec, 1, &sel);
+        sel.range->Release();
+        OutputDebugStringW(L"[JiDa] Commit: SetText via selection OK\n");
+        return S_OK;
       }
+      OutputDebugStringW(L"[JiDa] Commit: SetText via selection FAILED\n");
+      sel.range->Release();
+    } else {
+      OutputDebugStringW(L"[JiDa] Commit: GetSelection FAILED\n");
     }
 
-    return done ? S_OK : E_FAIL;
+    // ---------- 3. 兜底：InsertTextAtSelection ----------
+    ITfInsertAtSelection* ins = nullptr;
+    if (SUCCEEDED(
+            _ctx->QueryInterface(IID_ITfInsertAtSelection, (void**)&ins))) {
+      ITfRange* r = nullptr;
+      HRESULT hrIns = ins->InsertTextAtSelection(
+          ec, TF_IAS_NOQUERY, _text.c_str(), (ULONG)_text.size(), &r);
+      if (r)
+        r->Release();
+      ins->Release();
+      OutputDebugStringW(
+          SUCCEEDED(hrIns) ? L"[JiDa] Commit: InsertTextAtSelection OK\n"
+                           : L"[JiDa] Commit: InsertTextAtSelection FAILED\n");
+      if (SUCCEEDED(hrIns))
+        return S_OK;
+    }
+
+    return E_FAIL;
   }
 
  private:

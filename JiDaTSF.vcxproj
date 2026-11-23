@@ -76,6 +76,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Config.cpp" />
+    <ClCompile Include="Converter.cpp" />
     <ClCompile Include="DllMain.cpp" />
     <ClCompile Include="Globals.cpp" />
     <ClCompile Include="PhraseWindow.cpp" />
@@ -90,6 +91,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Config.h" />
+    <ClInclude Include="Converter.h" />
     <ClInclude Include="Globals.h" />
     <ClInclude Include="EditSessions.h" />
     <ClInclude Include="JiDaEngine.h" />
