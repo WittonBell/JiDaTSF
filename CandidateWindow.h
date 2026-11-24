@@ -16,6 +16,10 @@ class CCandidateWindow {
             int selected,
             RECT rcCaret,
             UINT dpi);
+  void ShowText(const std::wstring& text,
+                const std::wstring& hint,
+                RECT rcCaret,
+                UINT dpi);
   void Hide();
 
   std::function<void(POINT)> OnContextMenu;  // 右键菜单回调
@@ -51,4 +55,10 @@ class CCandidateWindow {
   int _cellGap = 0;  // 候选之间的间距（= 一个空格宽度）
 
   int _lastX = -1, _lastY = -1, _lastW = -1, _lastH = -1;
+
+  bool _textMode = false;
+  std::wstring _textContent;
+  std::wstring _textHint;
+  HFONT _hintFont = nullptr;
+  int _hintHeight = 0;
 };

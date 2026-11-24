@@ -5,53 +5,56 @@
 #include <vector>
 
 struct PhraseEntry {
-  std::wstring code;
-  std::wstring fullCode;  // 新增
+  std::wstring code;      // 用户输入的简码
+  std::wstring fullCode;  // 五笔全码
   std::wstring text;
-  bool selected = true;
 };
 
 class CPhraseWindow {
  public:
-  bool Create(HINSTANCE inst);
-  void Destroy();
-
-  using ConfirmHandler = std::function<void(const std::vector<PhraseEntry>&)>;
+  using ConfirmHandler =
+      std::function<void(const std::wstring& code, const std::wstring& text)>;
   using CancelHandler = std::function<void()>;
 
   CancelHandler OnCancel;
 
+  bool Create(HINSTANCE inst);
+  void Destroy();
   void Show(const std::vector<PhraseEntry>& entries,
             POINT anchor,
             ConfirmHandler onConfirm);
-
   void Hide();
   bool IsVisible() const { return _hwnd && IsWindowVisible(_hwnd) != FALSE; }
   HWND GetHwnd() const { return _hwnd; }
 
-  // 返回 true 表示该键已被造词窗口消费
   bool HandleKey(WPARAM vk);
 
  private:
   static LRESULT CALLBACK _WndProc(HWND, UINT, WPARAM, LPARAM);
   LRESULT _OnPaint();
-  LRESULT _OnLButtonUp(LPARAM lParam);
-  LRESULT _OnDpiChanged(WPARAM wParam, LPARAM lParam);
+  LRESULT _OnLButtonUp(LPARAM);
+  LRESULT _OnDpiChanged(WPARAM, LPARAM);
 
   void _RebuildFont();
   void _UpdateSize();
   void _Reposition(RECT anchor);
   void _Commit();
-  std::wstring _BuildCode() const;
-  std::wstring _BuildText() const;
+
+  std::wstring _ComputeCode() const;
+  std::wstring _ComputeText() const;
+  static std::wstring _BuildCode(const std::vector<PhraseEntry>& sel);
 
   HWND _hwnd = nullptr;
   HFONT _font = nullptr;
+  HFONT _smallFont = nullptr;
   UINT _dpi = 96;
-  int _cursor = 0;
   int _padding = 0;
   int _rowHeight = 0;
+  int _hintHeight = 0;
+  int _selectedCount = 2;  // 当前参与造词的字数（默认 2，最多 entries.size()）
+
   std::vector<PhraseEntry> _entries;
   ConfirmHandler _onConfirm;
+
   int _lastX = -1, _lastY = -1, _lastW = -1, _lastH = -1;
 };

@@ -2,6 +2,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include "DpiHelper.h"
+#include "Globals.h"
 
 static const wchar_t* kCandClass = L"JiDaCandWnd";
 
@@ -32,6 +33,10 @@ void CCandidateWindow::Destroy() {
     DeleteObject(_font);
     _font = nullptr;
   }
+  if (_hintFont) {
+    DeleteObject(_hintFont);
+    _hintFont = nullptr;
+  }
   if (_hwnd) {
     DestroyWindow(_hwnd);
     _hwnd = nullptr;
@@ -46,13 +51,23 @@ void CCandidateWindow::Hide() {
 void CCandidateWindow::_RebuildFont() {
   if (_font)
     DeleteObject(_font);
-  int height = -MulDiv(g_config.candFontSize, _dpi, 72);  // point → pixel
-  _font = CreateFontW(height, 0, 0, 0, g_config.candFontWeight,
+  if (_hintFont)
+    DeleteObject(_hintFont);
+
+  _font = CreateFontW(-MulDiv(g_config.candFontSize, _dpi, 72), 0, 0, 0,
+                      g_config.candFontWeight,
                       g_config.candFontItalic ? TRUE : FALSE, FALSE, FALSE,
                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                       CLEARTYPE_QUALITY, DEFAULT_PITCH, g_config.candFontFace);
+
+  _hintFont = CreateFontW(-MulDiv(11, _dpi, 72), 0, 0, 0, FW_NORMAL, FALSE,
+                          FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                          L"Microsoft YaHei");
+
   _rowHeight = MulDiv(g_config.candFontSize + 14, _dpi, 72);
   _padding = MulDiv(8, _dpi, 96);
+  _hintHeight = MulDiv(20, _dpi, 96);
 }
 
 void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
@@ -63,7 +78,9 @@ void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
     Hide();
     return;
   }
-
+  _textMode = false;
+  _textContent.clear();
+  _textHint.clear();
   _items = items;
   if (selected < 0)
     selected = 0;
@@ -111,9 +128,93 @@ void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
   InvalidateRect(_hwnd, nullptr, FALSE);
 }
 
+void CCandidateWindow::ShowText(const std::wstring& text,
+                                const std::wstring& hint,
+                                RECT rc,
+                                UINT dpi) {
+  if (text.empty()) {
+    Hide();
+    return;
+  }
+
+  _textMode = true;
+  _textContent = text;
+  _textHint = hint;
+  _items.clear();
+  _title.clear();
+
+  if (dpi != _dpi) {
+    _dpi = dpi;
+    _RebuildFont();
+  }
+  _UpdateSize();
+
+  HMONITOR hmon = MonitorFromRect(&rc, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO mi = {sizeof(mi)};
+  GetMonitorInfo(hmon, &mi);
+  RECT wr;
+  GetWindowRect(_hwnd, &wr);
+  int w = wr.right - wr.left, h = wr.bottom - wr.top;
+  int x = rc.left;
+  int y = rc.bottom + MulDiv(4, _dpi, 96);
+  if (y + h > mi.rcWork.bottom)
+    y = rc.top - h - MulDiv(4, _dpi, 96);
+  if (x + w > mi.rcWork.right)
+    x = mi.rcWork.right - w;
+  if (x < mi.rcWork.left)
+    x = mi.rcWork.left;
+  if (y < mi.rcWork.top)
+    y = mi.rcWork.top;
+
+  bool needRepos = (x != _lastX || y != _lastY || w != _lastW || h != _lastH);
+  if (needRepos) {
+    SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    _lastX = x;
+    _lastY = y;
+    _lastW = w;
+    _lastH = h;
+  } else if (!IsWindowVisible(_hwnd)) {
+    ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+  }
+  InvalidateRect(_hwnd, nullptr, FALSE);
+}
+
 void CCandidateWindow::_UpdateSize() {
   if (!_hwnd)
     return;
+
+  if (_textMode) {
+    HDC dc = GetDC(_hwnd);
+    HGDIOBJ oldFont = SelectObject(dc, _font);
+
+    SIZE sz = {0, 0};
+    GetTextExtentPoint32W(dc, _textContent.c_str(), (int)_textContent.size(),
+                          &sz);
+    int contentW = (int)sz.cx;
+
+    if (!_textHint.empty()) {
+      SelectObject(dc, _hintFont);
+      SIZE hintSz = {0, 0};
+      GetTextExtentPoint32W(dc, _textHint.c_str(), (int)_textHint.size(),
+                            &hintSz);
+      if ((int)hintSz.cx > contentW)
+        contentW = (int)hintSz.cx;
+    }
+
+    SelectObject(dc, oldFont);
+    ReleaseDC(_hwnd, dc);
+
+    int w = contentW + _padding * 2;
+    int minW = MulDiv(220, _dpi, 96);
+    if (w < minW)
+      w = minW;
+
+    int h = _padding * 2 + _rowHeight + MulDiv(6, _dpi, 96) + _hintHeight;
+    SetWindowPos(_hwnd, nullptr, 0, 0, w, h,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return;
+  }
 
   int titleH = _title.empty() ? 0 : (_rowHeight + MulDiv(6, _dpi, 96));
   int pageEnd = (std::min)(_pageStart + CandPageSize(), (int)_items.size());
@@ -237,6 +338,32 @@ LRESULT CCandidateWindow::_OnPaint() {
   SetBkMode(mem, TRANSPARENT);
   HGDIOBJ oldF = SelectObject(mem, _font);
 
+  if (_textMode) {
+    // 文本模式：上行正文 + 下行提示
+    HGDIOBJ oldF = SelectObject(mem, _font);
+    SetTextColor(mem, RGB(30, 30, 30));
+    RECT textRc = {_padding, _padding, rc.right - _padding,
+                   _padding + _rowHeight};
+    DrawTextW(mem, _textContent.c_str(), (int)_textContent.size(), &textRc,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(mem, oldF);
+
+    HGDIOBJ oldH = SelectObject(mem, _hintFont);
+    SetTextColor(mem, RGB(140, 140, 140));
+    RECT hintRc = {_padding, rc.bottom - _padding - _hintHeight,
+                   rc.right - _padding, rc.bottom - _padding};
+    DrawTextW(mem, _textHint.c_str(), (int)_textHint.size(), &hintRc,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(mem, oldH);
+
+    BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, oldB);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    EndPaint(_hwnd, &ps);
+    return 0;
+  }
+
   int y = _padding;
 
   if (!_title.empty()) {
@@ -314,6 +441,9 @@ LRESULT CCandidateWindow::_OnPaint() {
 }
 
 int CCandidateWindow::_HitTest(int mx, int my) const {
+  if (_textMode)
+    return -1;
+
   int titleH = _title.empty() ? 0 : (_rowHeight + MulDiv(6, _dpi, 96));
   int pageEnd = (std::min)(_pageStart + CandPageSize(), (int)_items.size());
   if (IsVertical()) {
@@ -338,6 +468,9 @@ int CCandidateWindow::_HitTest(int mx, int my) const {
 }
 
 LRESULT CCandidateWindow::_OnLButtonUp(LPARAM l) {
+  if (_textMode)
+    return 0;
+
   int idx = _HitTest(GET_X_LPARAM(l), GET_Y_LPARAM(l));
   if (idx >= 0) {
     _selected = idx;
@@ -349,6 +482,9 @@ LRESULT CCandidateWindow::_OnLButtonUp(LPARAM l) {
 }
 
 LRESULT CCandidateWindow::_OnMouseMove(LPARAM l) {
+  if (_textMode)
+    return 0;
+
   int idx = _HitTest(GET_X_LPARAM(l), GET_Y_LPARAM(l));
   if (idx != _hover) {
     _hover = idx;

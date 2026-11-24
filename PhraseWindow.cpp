@@ -2,6 +2,8 @@
 #include <shellscalingapi.h>
 #include <windowsx.h>
 #include <algorithm>
+#include "Globals.h"
+
 #pragma comment(lib, "Shcore.lib")
 
 static const wchar_t* kPhraseClass = L"JiDa.PhraseWindow";
@@ -11,7 +13,7 @@ bool CPhraseWindow::Create(HINSTANCE inst) {
   wc.lpfnWndProc = _WndProc;
   wc.hInstance = inst;
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-  wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+  wc.hbrBackground = nullptr;
   wc.lpszClassName = kPhraseClass;
   RegisterClassEx(&wc);
 
@@ -30,6 +32,10 @@ void CPhraseWindow::Destroy() {
     DeleteObject(_font);
     _font = nullptr;
   }
+  if (_smallFont) {
+    DeleteObject(_smallFont);
+    _smallFont = nullptr;
+  }
   if (_hwnd) {
     DestroyWindow(_hwnd);
     _hwnd = nullptr;
@@ -44,22 +50,37 @@ void CPhraseWindow::Hide() {
 void CPhraseWindow::_RebuildFont() {
   if (_font)
     DeleteObject(_font);
-  _font = CreateFontW(-MulDiv(16, _dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                      FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                      CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                      L"Microsoft YaHei");
-  _rowHeight = MulDiv(40, _dpi, 96);
-  _padding = MulDiv(12, _dpi, 96);
+  if (_smallFont)
+    DeleteObject(_smallFont);
+
+  // 正文字体：与候选框一致（磅值→像素用 dpi/72）
+  _font = CreateFontW(-MulDiv(g_config.candFontSize, _dpi, 72), 0, 0, 0,
+                      g_config.candFontWeight,
+                      g_config.candFontItalic ? TRUE : FALSE, FALSE, FALSE,
+                      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                      CLEARTYPE_QUALITY, DEFAULT_PITCH, g_config.candFontFace);
+
+  // 编码字体：稍小，同样用 candFontFace
+  _smallFont = CreateFontW(
+      -MulDiv(g_config.candFontSize - 2 > 9 ? g_config.candFontSize - 2 : 9,
+              _dpi, 72),
+      0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
+      g_config.candFontFace);
+
+  _rowHeight = MulDiv(g_config.candFontSize + 20, _dpi, 72);
+  _hintHeight = MulDiv(22, _dpi, 96);
+  _padding = MulDiv(14, _dpi, 96);
 }
 
 void CPhraseWindow::Show(const std::vector<PhraseEntry>& entries,
                          POINT anchor,
                          ConfirmHandler onConfirm) {
-  if (entries.empty())
+  if (entries.size() < 2)
     return;
 
   _entries = entries;
-  _cursor = 0;
+  _selectedCount = 2;
   _onConfirm = std::move(onConfirm);
   _lastX = _lastY = _lastW = _lastH = -1;
 
@@ -77,12 +98,36 @@ void CPhraseWindow::Show(const std::vector<PhraseEntry>& entries,
 }
 
 void CPhraseWindow::_UpdateSize() {
-  const int itemW = MulDiv(64, _dpi, 96);
-  int w = _padding * 2 + (int)_entries.size() * itemW;
-  int minW = MulDiv(300, _dpi, 96);
+  HDC dc = GetDC(_hwnd);
+  HGDIOBJ oldFont = SelectObject(dc, _font);
+
+  std::wstring text = _ComputeText();
+  SIZE textSz = {0, 0};
+  GetTextExtentPoint32W(dc, text.c_str(), (int)text.size(), &textSz);
+
+  SelectObject(dc, _smallFont);
+  std::wstring code = _ComputeCode();
+  SIZE codeSz = {0, 0};
+  if (!code.empty())
+    GetTextExtentPoint32W(dc, code.c_str(), (int)code.size(), &codeSz);
+
+  const wchar_t* hint = L"← → 加/减字   Shift+← → 快速   Enter 确认   Esc 取消";
+  SIZE hintSz = {0, 0};
+  GetTextExtentPoint32W(dc, hint, (int)wcslen(hint), &hintSz);
+
+  SelectObject(dc, oldFont);
+  ReleaseDC(_hwnd, dc);
+
+  LONG contentW = (std::max)(textSz.cx, codeSz.cx);
+  contentW = (std::max)(contentW, hintSz.cx);
+
+  int w = contentW + _padding * 2;
+  int minW = MulDiv(360, _dpi, 96);
   if (w < minW)
     w = minW;
-  int h = _rowHeight + _padding * 2 + MulDiv(24, _dpi, 96);
+
+  int h = _padding * 2 + _rowHeight + MulDiv(4, _dpi, 96) + _hintHeight;
+
   SetWindowPos(_hwnd, nullptr, 0, 0, w, h,
                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
@@ -116,31 +161,67 @@ void CPhraseWindow::_Reposition(RECT anchor) {
   _lastH = h;
 }
 
-std::wstring CPhraseWindow::_BuildCode() const {
+std::wstring CPhraseWindow::_ComputeText() const {
+  if (_selectedCount <= 0)
+    return L"";
+  std::wstring text;
+  size_t start = _entries.size() - _selectedCount;
+  for (size_t i = start; i < _entries.size(); ++i) {
+    text += _entries[i].text;
+  }
+  return text;
+}
+
+std::wstring CPhraseWindow::_ComputeCode() const {
+  if (_selectedCount < 2)
+    return L"";
+  std::vector<PhraseEntry> sel(_entries.end() - _selectedCount, _entries.end());
+  return _BuildCode(sel);
+}
+
+std::wstring CPhraseWindow::_BuildCode(const std::vector<PhraseEntry>& sel) {
+  if (sel.empty())
+    return L"";
+  auto getFull = [](const PhraseEntry& e) -> const std::wstring& {
+    return e.fullCode.empty() ? e.code : e.fullCode;
+  };
+  auto safeSub = [](const std::wstring& s, size_t pos, size_t len) {
+    if (pos >= s.size())
+      return std::wstring();
+    return s.substr(pos, (std::min)(len, s.size() - pos));
+  };
+
+  size_t n = sel.size();
   std::wstring code;
-  for (auto& e : _entries)
-    if (e.selected)
-      code += e.code;
+  if (n == 2) {
+    code = safeSub(getFull(sel[0]), 0, 2) + safeSub(getFull(sel[1]), 0, 2);
+  } else if (n == 3) {
+    code = safeSub(getFull(sel[0]), 0, 1) + safeSub(getFull(sel[1]), 0, 1) +
+           safeSub(getFull(sel[2]), 0, 2);
+  } else if (n == 4) {
+    for (size_t i = 0; i < 4; ++i)
+      code += safeSub(getFull(sel[i]), 0, 1);
+  } else {
+    code = safeSub(getFull(sel[0]), 0, 1) + safeSub(getFull(sel[1]), 0, 1) +
+           safeSub(getFull(sel[2]), 0, 1) + safeSub(getFull(sel[n - 1]), 0, 1);
+  }
   if (code.size() > 4)
     code.resize(4);
   return code;
 }
 
-std::wstring CPhraseWindow::_BuildText() const {
-  std::wstring text;
-  for (auto& e : _entries)
-    if (e.selected)
-      text += e.text;
-  return text;
-}
-
 void CPhraseWindow::_Commit() {
-  std::vector<PhraseEntry> selected;
-  for (auto& e : _entries)
-    if (e.selected)
-      selected.push_back(e);
-  if (!selected.empty() && _onConfirm)
-    _onConfirm(selected);
+  if (_selectedCount < 2) {
+    Hide();
+    return;
+  }
+  std::vector<PhraseEntry> sel(_entries.end() - _selectedCount, _entries.end());
+  std::wstring code = _BuildCode(sel);
+  std::wstring text;
+  for (auto& e : sel)
+    text += e.text;
+  if (_onConfirm && !code.empty() && !text.empty())
+    _onConfirm(code, text);
   Hide();
 }
 
@@ -148,32 +229,40 @@ bool CPhraseWindow::HandleKey(WPARAM vk) {
   if (!IsVisible())
     return false;
 
+  // Shift 按住时一次移动 5 个，否则一次 1 个
+  bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+  int step = shift ? 5 : 1;
+
   switch (vk) {
-    case VK_LEFT:
-      if (_cursor > 0) {
-        --_cursor;
+    case VK_LEFT: {
+      int newCount = _selectedCount + step;
+      if (newCount > (int)_entries.size())
+        newCount = (int)_entries.size();
+      if (newCount != _selectedCount) {
+        _selectedCount = newCount;
+        _UpdateSize();
         InvalidateRect(_hwnd, nullptr, TRUE);
       }
       return true;
-    case VK_RIGHT:
-      if (_cursor + 1 < (int)_entries.size()) {
-        ++_cursor;
+    }
+    case VK_RIGHT: {
+      int newCount = _selectedCount - step;
+      if (newCount < 2)
+        newCount = 2;
+      if (newCount != _selectedCount) {
+        _selectedCount = newCount;
+        _UpdateSize();
         InvalidateRect(_hwnd, nullptr, TRUE);
       }
       return true;
-    case VK_SPACE:
-      if (_cursor >= 0 && _cursor < (int)_entries.size()) {
-        _entries[_cursor].selected = !_entries[_cursor].selected;
-        InvalidateRect(_hwnd, nullptr, TRUE);
-      }
-      return true;
+    }
     case VK_RETURN:
       _Commit();
       return true;
     case VK_ESCAPE:
       Hide();
       if (OnCancel)
-        OnCancel();  // ← 通知外部清空历史
+        OnCancel();
       return true;
   }
   return false;
@@ -212,70 +301,46 @@ LRESULT CPhraseWindow::_OnPaint() {
   HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
   HGDIOBJ oldB = SelectObject(mem, bmp);
 
-  FillRect(mem, &rc, (HBRUSH)(COLOR_WINDOW + 1));
+  // 背景（浅色）
+  HBRUSH bg = CreateSolidBrush(RGB(252, 252, 252));
+  FillRect(mem, &rc, bg);
+  DeleteObject(bg);
+
+  // 边框
+  HPEN pen = CreatePen(PS_SOLID, 1, RGB(180, 180, 180));
+  HGDIOBJ oldPen = SelectObject(mem, pen);
+  HGDIOBJ oldBr = SelectObject(mem, GetStockObject(NULL_BRUSH));
+  Rectangle(mem, 0, 0, rc.right, rc.bottom);
+  SelectObject(mem, oldBr);
+  SelectObject(mem, oldPen);
+  DeleteObject(pen);
+
   SetBkMode(mem, TRANSPARENT);
+
+  // 大字：直接显示文字，无框、无编码
   HGDIOBJ oldF = SelectObject(mem, _font);
+  SetTextColor(mem, RGB(30, 30, 30));
+  std::wstring text = _ComputeText();
+  RECT textRc = {_padding, _padding, rc.right - _padding,
+                 _padding + _rowHeight};
+  DrawTextW(mem, text.c_str(), (int)text.size(), &textRc,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-  int itemW = MulDiv(64, _dpi, 96);
-  int x = _padding;
-  int y = _padding;
+  // 右上角：整词编码
+  SelectObject(mem, _smallFont);
+  SetTextColor(mem, RGB(0, 120, 215));
+  std::wstring code = _ComputeCode();
+  RECT codeRc = {_padding, _padding, rc.right - _padding,
+                 _padding + _rowHeight};
+  DrawTextW(mem, code.c_str(), (int)code.size(), &codeRc,
+            DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
-  for (int i = 0; i < (int)_entries.size(); ++i) {
-    auto& e = _entries[i];
-    RECT item = {x, y, x + itemW - MulDiv(2, _dpi, 96), y + _rowHeight};
-
-    COLORREF bg = e.selected ? RGB(224, 244, 224) : RGB(240, 240, 240);
-    HBRUSH br = CreateSolidBrush(bg);
-    FillRect(mem, &item, br);
-    DeleteObject(br);
-
-    if (i == _cursor) {
-      HPEN pen = CreatePen(PS_SOLID, 2, RGB(0, 120, 215));
-      HGDIOBJ oldP = SelectObject(mem, pen);
-      HGDIOBJ oldBr = SelectObject(mem, GetStockObject(NULL_BRUSH));
-      Rectangle(mem, item.left, item.top, item.right, item.bottom);
-      SelectObject(mem, oldBr);
-      SelectObject(mem, oldP);
-      DeleteObject(pen);
-    }
-
-    // 上半：字
-    SetTextColor(mem, RGB(30, 30, 30));
-    RECT textRc = item;
-    textRc.bottom = item.top + _rowHeight / 2 + MulDiv(6, _dpi, 96);
-    DrawTextW(mem, e.text.c_str(), -1, &textRc,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    // 下半：编码
-    HFONT smallFont = CreateFontW(
-        -MulDiv(11, _dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
-    HGDIOBJ oldSmall = SelectObject(mem, smallFont);
-    SetTextColor(mem, RGB(120, 120, 120));
-    RECT codeRc = {item.left, item.top + _rowHeight / 2, item.right,
-                   item.bottom};
-    DrawTextW(mem, e.code.c_str(), -1, &codeRc,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    SelectObject(mem, oldSmall);
-    DeleteObject(smallFont);
-
-    x += itemW;
-  }
-
-  // 底部提示行
-  HFONT hintFont = CreateFontW(
-      -MulDiv(11, _dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-      CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
-  HGDIOBJ oldHint = SelectObject(mem, hintFont);
-  SetTextColor(mem, RGB(100, 100, 100));
-  RECT hintRc = {_padding, y + _rowHeight + MulDiv(2, _dpi, 96),
+  // 底部提示
+  SetTextColor(mem, RGB(140, 140, 140));
+  const wchar_t* hint = L"← → 加/减字   Shift+← → 快速   Enter 确认   Esc 取消";
+  RECT hintRc = {_padding, rc.bottom - _padding - _hintHeight,
                  rc.right - _padding, rc.bottom - _padding};
-  DrawTextW(mem, L"← → 移动   空格 切换选中   回车 确认   ESC 取消", -1,
-            &hintRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-  SelectObject(mem, oldHint);
-  DeleteObject(hintFont);
+  DrawTextW(mem, hint, -1, &hintRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
   SelectObject(mem, oldF);
   BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
@@ -286,15 +351,9 @@ LRESULT CPhraseWindow::_OnPaint() {
   return 0;
 }
 
-LRESULT CPhraseWindow::_OnLButtonUp(LPARAM l) {
-  POINT pt = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
-  int itemW = MulDiv(64, _dpi, 96);
-  int idx = (pt.x - _padding) / itemW;
-  if (idx >= 0 && idx < (int)_entries.size()) {
-    _cursor = idx;
-    _entries[idx].selected = !_entries[idx].selected;
-    InvalidateRect(_hwnd, nullptr, TRUE);
-  }
+LRESULT CPhraseWindow::_OnLButtonUp(LPARAM) {
+  // 鼠标点击直接确认（简化交互，符合极点风格）
+  _Commit();
   return 0;
 }
 

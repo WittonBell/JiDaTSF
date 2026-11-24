@@ -379,8 +379,6 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
                                          LPARAM lParam,
                                          BOOL* pfEaten) {
   *pfEaten = FALSE;
-  if (!_status.chinese)
-    return S_OK;
 
   if (_activeCtx) {
     _activeCtx->Release();
@@ -390,6 +388,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   _activeCtx->AddRef();
 
   // ---------------- 英文模式 ----------------
+  // 英文模式：全角时接管并转全角输出；半角时全部交宿主
   if (!_status.chinese) {
     if (_status.fullShape) {
       wchar_t ch = 0;
@@ -405,6 +404,8 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     }
     return S_OK;
   }
+
+  // ---------------- 中文模式 ----------------
 
   // 1. 造词窗口可见 → 独占
   if (_phraseWnd && _phraseWnd->IsVisible()) {
@@ -472,7 +473,8 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
       }
       return S_OK;
     }
-    // ---------------- 标点处理 ----------------
+	// ---------------- 标点处理 ----------------
+    // 临时英文模式下的标点：拼进缓冲区（用 VkToChar 取原字符）
     bool isPunctKey =
         (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
          wParam == VK_OEM_PERIOD || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
@@ -488,7 +490,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 4.Shift + 字母：开关关闭时进入临时英文
+  // 4. Shift + 字母：开关关闭时进入临时英文
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift && wParam >= 'A' && wParam <= 'Z') {
     if (g_config.shiftDirectCommit)
@@ -634,7 +636,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 分号：有编码 -> 选第二重码；无编码 -> 交给宿主输入分号
+  // 分号：有编码 -> 选第二重码；无编码 -> 继续往下走标点处理
   if (wParam == VK_OEM_1) {
     if (_engine.IsWaitingDateOrAmount()) {
       std::wstring committed;
@@ -662,6 +664,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
       _CancelWithContext(pic);
       _HideCandidates();
     }
+    // 无编码分号：不 return，落到下面的标点处理
   }
 
   // 日期/金额等待态下的数字/点
@@ -914,16 +917,12 @@ void CJiDaTextService::_ShowTempEnglish(ITfContext* pic) {
     return;
   }
 
-  _candWnd->SetTitle(_tempEnglishBuffer);
-
-  std::vector<CandidateItem> items;
-  // items.push_back({_tempEnglishBuffer, L""});
-
   RECT rcCaret = {};
   _GetHostCaret(pic, rcCaret);
 
   UINT dpi = GetDpiForRect(rcCaret);
-  _candWnd->Show(items, 0, rcCaret, dpi);
+  _candWnd->ShowText(_tempEnglishBuffer, L"Enter 上屏   Esc 取消", rcCaret,
+                     dpi);
 }
 
 void CJiDaTextService::_HideCandidates() {
@@ -1081,11 +1080,10 @@ void CJiDaTextService::_ShowPhraseWindow(ITfContext* pic) {
   if (!_phraseWnd)
     return;
 
-  // 已可见 → 视为取消
   if (_phraseWnd->IsVisible()) {
     _phraseWnd->Hide();
     _engine.ClearRecentCommits();
-    OutputDebugStringW(L"[JiDa] Phrase: closed, history cleared\n");
+    OutputDebugStringW(L"[JiDa] Phrase: closed by Ctrl+=, history cleared\n");
     return;
   }
 
@@ -1099,61 +1097,27 @@ void CJiDaTextService::_ShowPhraseWindow(ITfContext* pic) {
     return;
   }
 
-  // 最多显示最近 16 个
-  const size_t kMaxDisplay = 16;
-  size_t start =
-      (commits.size() > kMaxDisplay) ? commits.size() - kMaxDisplay : 0;
-
   std::vector<PhraseEntry> entries;
-  entries.reserve(commits.size() - start);
-  for (size_t i = start; i < commits.size(); ++i) {
-    entries.push_back(PhraseEntry{commits[i].code, commits[i].fullCode,
-                                  commits[i].text, true});
-  }
+  entries.reserve(commits.size());
+  for (auto& c : commits)
+    entries.push_back(PhraseEntry{c.code, c.fullCode, c.text});
 
-  // 定位到光标
-  POINT anchor = {0, 0};
-  RECT rcCaret = {0, 0, 0, 0};
-  ITfContextView* view = nullptr;
-  if (SUCCEEDED(pic->GetActiveView(&view)) && view) {
-    ITfRange* range = nullptr;
-    TF_SELECTION sel;
-    ULONG n = 0;
-    if (SUCCEEDED(pic->GetSelection(TF_INVALID_EDIT_COOKIE,
-                                    TF_DEFAULT_SELECTION, 1, &sel, &n)) &&
-        n)
-      range = sel.range;
-    if (range) {
-      RECT r;
-      BOOL clipped = FALSE;
-      view->GetTextExt(TF_INVALID_EDIT_COOKIE, range, &r, &clipped);
-      if (r.right > r.left || r.bottom > r.top)
-        rcCaret = r;
-      range->Release();
-    }
-    view->Release();
-  }
-  anchor.x = rcCaret.left;
-  anchor.y = rcCaret.bottom;
+  RECT rcCaret = {};
+  _GetHostCaret(pic, rcCaret);
 
-  // 取消回调：清空历史
+  POINT anchor = {rcCaret.left, rcCaret.bottom};
+
   _phraseWnd->OnCancel = [this]() {
     _engine.ClearRecentCommits();
     OutputDebugStringW(L"[JiDa] Phrase: cancelled, history cleared\n");
   };
 
-  // 确认回调：生成编码 + 写入词库 + 清空历史
   _phraseWnd->Show(
-      entries, anchor, [this](const std::vector<PhraseEntry>& selected) {
-        std::wstring code = BuildPhraseCode(selected);
-        std::wstring text;
-        for (auto& e : selected)
-          text += e.text;
-
+      entries, anchor,
+      [this](const std::wstring& code, const std::wstring& text) {
         wchar_t d[512];
-        swprintf_s(d,
-                   L"[JiDa] Phrase confirm: count=%zu code='%ls' text='%ls'\n",
-                   selected.size(), code.c_str(), text.c_str());
+        swprintf_s(d, L"[JiDa] Phrase confirm: code='%ls' text='%ls'\n",
+                   code.c_str(), text.c_str());
         OutputDebugStringW(d);
 
         if (code.empty() || text.empty()) {
@@ -1161,18 +1125,12 @@ void CJiDaTextService::_ShowPhraseWindow(ITfContext* pic) {
           return;
         }
 
-        // 重复检查
-        bool dup = false;
         for (auto& up : g_userPhrases) {
           if (up.code == code && up.text == text) {
-            dup = true;
-            break;
+            OutputDebugStringW(L"[JiDa] Phrase: duplicate, skip\n");
+            _engine.ClearRecentCommits();
+            return;
           }
-        }
-        if (dup) {
-          OutputDebugStringW(L"[JiDa] Phrase: duplicate, skip\n");
-          _engine.ClearRecentCommits();
-          return;
         }
 
         if (AddUserPhrase(code, text)) {
@@ -1181,7 +1139,7 @@ void CJiDaTextService::_ShowPhraseWindow(ITfContext* pic) {
                      code.c_str(), text.c_str(), g_userPhrases.size());
           OutputDebugStringW(d);
         } else {
-          OutputDebugStringW(L"[JiDa] Phrase: AddUserPhrase returned false\n");
+          OutputDebugStringW(L"[JiDa] Phrase: AddUserPhrase failed\n");
         }
 
         _engine.ClearRecentCommits();
