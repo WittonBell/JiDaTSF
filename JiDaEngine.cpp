@@ -146,7 +146,7 @@ EngineAction JiDaEngine::OnLetter(wchar_t ch,
     return EngineAction::None;
   }
 
-  // 四码满：先顶出首选，再以新字母开新编码
+  // 四码满：先上屏首选，再以新字母开新编码
   if (buffer_.size() == 4 && IsFourCodeComplete()) {
     std::wstring top = candidates_.front().text;
     committed = top;
@@ -154,7 +154,7 @@ EngineAction JiDaEngine::OnLetter(wchar_t ch,
     buffer_ = std::wstring(1, ch);
     Query(buffer_);
     newBuffer = buffer_;
-    return EngineAction::TopCommitAndContinue;
+    return EngineAction::Commit;
   }
   if (buffer_.size() >= 4)
     return EngineAction::None;
@@ -163,8 +163,7 @@ EngineAction JiDaEngine::OnLetter(wchar_t ch,
   Query(buffer_);
 
   // 四码唯一自动上屏
-  if (g_config.autoCommitUnique && IsFourCodeComplete() &&
-      candidates_.size() == 1) {
+  if (IsFourCodeComplete() && candidates_.size() == 1) {
     committed = candidates_.front().text;
     CommitText(committed);
     Reset();

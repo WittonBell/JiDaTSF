@@ -9,8 +9,7 @@ static CSettingWindow* s_SettingInstance = nullptr;
 
 namespace {
 enum : int {
-  ID_AUTO_COMMIT = 1001,
-  ID_Z_WILDCARD,
+  ID_Z_WILDCARD = 1001,
   ID_Z_REPEAT,
   ID_SEMI_SECOND,
   ID_PUNCT_TOP,
@@ -202,17 +201,15 @@ void CSettingWindow::_Layout() {
 
   // ===== 输入选项 =====
   HWND g1 = _MkGroup(L"输入选项", 10, 10, 340, 125);
-  _chkAutoCommit =
-      _MkCheck(L"四码唯一时自动上屏", 22, 32, 150, ID_AUTO_COMMIT, true);
-  _chkZWildcard = _MkCheck(L"Z 键通配", 22, 56, 150, ID_Z_WILDCARD, true);
-  _chkZRepeat = _MkCheck(L"Z 键重复上次", 22, 80, 150, ID_Z_REPEAT, true);
-  _chkPunctTop = _MkCheck(L"标点顶字上屏", 22, 104, 150, ID_PUNCT_TOP, true);
+  _chkZWildcard = _MkCheck(L"Z 键通配", 22, 32, 150, ID_Z_WILDCARD, true);
+  _chkZRepeat = _MkCheck(L"Z 键重复上次", 22, 56, 150, ID_Z_REPEAT, true);
+  _chkPunctTop = _MkCheck(L"标点顶字上屏", 22, 80, 150, ID_PUNCT_TOP, true);
   _chkSemiSecond =
-      _MkCheck(L"分号选第二重码", 185, 32, 150, ID_SEMI_SECOND, true);
-  _chkPerKey = _MkCheck(L"逐键提示", 185, 56, 150, ID_PERKEY_HINT, true);
-  _chkInline = _MkCheck(L"嵌入预编辑", 185, 80, 150, ID_INLINE_PREEDIT, false);
+      _MkCheck(L"分号选第二重码", 22, 104, 150, ID_SEMI_SECOND, true);
+  _chkPerKey = _MkCheck(L"逐键提示", 185, 32, 150, ID_PERKEY_HINT, true);
+  _chkInline = _MkCheck(L"嵌入预编辑", 185, 56, 150, ID_INLINE_PREEDIT, false);
   _chkShiftDirect =
-      _MkCheck(L"Shift 直接上屏", 185, 104, 150, ID_CHK_SHIFT_DIRECT, true);
+      _MkCheck(L"Shift 直接上屏", 185, 80, 150, ID_CHK_SHIFT_DIRECT, true);
 
   // ===== 显示选项 =====
   HWND g2 = _MkGroup(L"显示选项", 10, 145, 340, 140);
@@ -244,8 +241,7 @@ void CSettingWindow::_Layout() {
   _btnCancel = _MkButton(L"取消(&C)", 155, 346, 80, 26, ID_BTN_CANCEL);
 
   // 统一字体
-  HWND all[] = {_chkAutoCommit,
-                _chkZWildcard,
+  HWND all[] = {_chkZWildcard,
                 _chkZRepeat,
                 _chkSemiSecond,
                 _chkPunctTop,
@@ -274,8 +270,6 @@ void CSettingWindow::_Layout() {
 }
 
 void CSettingWindow::_LoadFromConfig() {
-  SendMessageW(_chkAutoCommit, BM_SETCHECK, g_config.autoCommitUnique ? 1 : 0,
-               0);
   SendMessageW(_chkZWildcard, BM_SETCHECK, g_config.zWildcard ? 1 : 0, 0);
   SendMessageW(_chkZRepeat, BM_SETCHECK, g_config.zRepeat ? 1 : 0, 0);
   SendMessageW(_chkSemiSecond, BM_SETCHECK, g_config.semicolonSecond ? 1 : 0,
@@ -302,8 +296,6 @@ void CSettingWindow::_LoadFromConfig() {
 }
 
 void CSettingWindow::_SaveToConfig() {
-  g_config.autoCommitUnique =
-      SendMessageW(_chkAutoCommit, BM_GETCHECK, 0, 0) == BST_CHECKED;
   g_config.zWildcard =
       SendMessageW(_chkZWildcard, BM_GETCHECK, 0, 0) == BST_CHECKED;
   g_config.zRepeat =
@@ -331,7 +323,6 @@ void CSettingWindow::_SaveToConfig() {
 
 void CSettingWindow::_ResetToDefault() {
   JiDaConfig d;
-  SendMessageW(_chkAutoCommit, BM_SETCHECK, d.autoCommitUnique ? 1 : 0, 0);
   SendMessageW(_chkZWildcard, BM_SETCHECK, d.zWildcard ? 1 : 0, 0);
   SendMessageW(_chkZRepeat, BM_SETCHECK, d.zRepeat ? 1 : 0, 0);
   SendMessageW(_chkSemiSecond, BM_SETCHECK, d.semicolonSecond ? 1 : 0, 0);

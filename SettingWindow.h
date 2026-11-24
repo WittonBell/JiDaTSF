@@ -46,7 +46,7 @@ class CSettingWindow {
   HFONT _font = nullptr;
   ChangeCallback _onChange;
 
-  HWND _chkAutoCommit = nullptr, _chkZWildcard = nullptr, _chkZRepeat = nullptr;
+  HWND _chkZWildcard = nullptr, _chkZRepeat = nullptr;
   HWND _chkSemiSecond = nullptr, _chkPunctTop = nullptr, _chkPerKey = nullptr;
   HWND _chkInline = nullptr, _chkShowBar = nullptr;
   HWND _radVert = nullptr, _radHorz = nullptr;

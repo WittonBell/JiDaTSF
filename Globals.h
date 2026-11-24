@@ -34,7 +34,6 @@ struct UserPhrase {
 enum class CandLayout { Vertical, Horizontal };
 
 struct JiDaConfig {
-  bool autoCommitUnique = true;
   bool zRepeat = true;
   bool zWildcard = true;
   bool semicolonSecond = true;

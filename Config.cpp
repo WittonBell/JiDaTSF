@@ -68,8 +68,6 @@ void LoadJiDaConfig() {
     return;
 
   const wchar_t* in = L"Input";
-  g_config.autoCommitUnique =
-      ReadBool(in, L"AutoCommitUnique", g_config.autoCommitUnique);
   g_config.zWildcard = ReadBool(in, L"ZWildcard", g_config.zWildcard);
   g_config.zRepeat = ReadBool(in, L"ZRepeat", g_config.zRepeat);
   g_config.semicolonSecond =
@@ -117,7 +115,6 @@ void LoadJiDaConfig() {
 
 void SaveJiDaConfig() {
   const wchar_t* in = L"Input";
-  WriteBool(in, L"AutoCommitUnique", g_config.autoCommitUnique);
   WriteBool(in, L"ZWildcard", g_config.zWildcard);
   WriteBool(in, L"ZRepeat", g_config.zRepeat);
   WriteBool(in, L"SemicolonSecond", g_config.semicolonSecond);
