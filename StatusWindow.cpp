@@ -116,9 +116,9 @@ bool CStatusWindow::Create(HINSTANCE instance,
 
   // 4) 位置计算（严格限制在 work area 内）
   if (x == CW_USEDEFAULT)
-    x = workR - realW - Scale(16);
+    x = workR - realW;  // 向左移动多少 -Scale(16);
   if (y == CW_USEDEFAULT)
-    y = workB - realH - Scale(40);
+    y = workB - realH;  // 向上移动多少 - Scale(10);
 
   if (x < workL)
     x = workL;
