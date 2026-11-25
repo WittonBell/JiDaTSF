@@ -289,7 +289,11 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift && wParam >= 'A' && wParam <= 'Z') {
     if (g_config.shiftDirectCommit)
-      return S_OK;    // 开关打开 → 宿主输出大写
+      return S_OK;  // 开关打开 → 宿主输出大写
+    if (!_status.chinese) {
+      // 英文模式，宿主输出大写
+      return S_OK;
+    }
     *pfEaten = TRUE;  // 开关关闭 → 进入临时英文（在 OnKeyDown 处理）
     return S_OK;
   }
