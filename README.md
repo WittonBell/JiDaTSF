@@ -55,6 +55,7 @@ powershell -ExecutionPolicy Bypass -File scripts\register.ps1
 
 1. 调用 `regsvr32 /s` 注册 DLL
 2. 把 `data\jidian_wubi86.txt` 复制到 DLL 同目录的 `data\` 下
+3. 生成供启动时快速加载的 `jidian_wubi86.txt.jdc` 缓存
 
 注册完成后：
 
@@ -80,6 +81,7 @@ JiDaTSF/bin/x64/Release/data/jidian_wubi86.txt
 ```
 
 码表必须放在与 `JiDaTSF.dll` 同目录的 `data\` 子目录下。`DllMain` 在加载 DLL 时按 DLL 所在路径查找。
+安装脚本会根据码表生成启动缓存；更新词库后重新运行安装脚本即可刷新缓存。缓存不可用或与源词库版本不符时，输入法会回退到异步文本加载。
 
 ### 完整极点词库
 

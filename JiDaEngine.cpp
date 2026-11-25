@@ -1,5 +1,6 @@
 #include "JiDaEngine.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cwctype>
 #include <string_view>
@@ -59,17 +60,17 @@ void JiDaEngine::Query(const std::wstring& code) {
   if (code.empty())
     return;
 
-  static bool loggedOnce = false;
-  if (!loggedOnce) {
-    loggedOnce = true;
-    wchar_t dbg[128];
-    swprintf_s(dbg, L"[JiDa] Query: loaded=%d entries=%zu trie=%zu\n",
-               IsJiDaTableLoaded() ? 1 : 0, g_entries.size(), g_trie.size());
-    OutputDebugStringW(dbg);
-  }
-
   if (!IsJiDaTableLoaded())
     return;
+
+  static std::atomic<bool> loggedOnce{false};
+  bool expected = false;
+  if (loggedOnce.compare_exchange_strong(expected, true)) {
+    wchar_t dbg[128];
+    swprintf_s(dbg, L"[JiDa] Query: entries=%zu trie=%zu\n", g_entries.size(),
+               g_trie.size());
+    OutputDebugStringW(dbg);
+  }
 
   static constexpr int kMaxCandidates = 50;
   std::unordered_set<std::wstring_view> seen;
@@ -82,18 +83,26 @@ void JiDaEngine::Query(const std::wstring& code) {
     }
   }
 
-  // 1. 精确匹配 + 前缀匹配（Trie mergedEntries 已包含两者，短码优先）
-  int cur = TrieWalk(code);
-  if (cur >= 0) {
-    for (int idx : g_trie[cur].mergedEntries) {
-      auto& e = g_entries[idx];
-      if (seen.insert(std::wstring_view(e.word)).second) {
-        candidates_.push_back({e.word, e.code});
+  auto appendSubtree = [&](auto&& self, int node) -> bool {
+    for (int idx : g_trie[node].ownEntries) {
+      auto& entry = g_entries[idx];
+      if (seen.insert(std::wstring_view(entry.word)).second) {
+        candidates_.push_back({entry.word, entry.code});
         if ((int)candidates_.size() >= kMaxCandidates)
-          break;
+          return true;
       }
     }
-  }
+    for (int child : g_trie[node].children) {
+      if (child >= 0 && self(self, child))
+        return true;
+    }
+    return false;
+  };
+
+  // 1. 精确匹配 + 前缀匹配；遍历顺序与旧的合并索引一致。
+  int cur = TrieWalk(code);
+  if (cur >= 0)
+    appendSubtree(appendSubtree, cur);
 
   // 2. Z 通配：将 wildcardChar 替换为 a-y 逐一展开
   if (g_config.zWildcard) {
@@ -108,14 +117,7 @@ void JiDaEngine::Query(const std::wstring& code) {
         int cur2 = TrieWalk(expanded);
         if (cur2 < 0)
           continue;
-        for (int idx : g_trie[cur2].mergedEntries) {
-          auto& e = g_entries[idx];
-          if (seen.insert(std::wstring_view(e.word)).second) {
-            candidates_.push_back({e.word, e.code});
-            if ((int)candidates_.size() >= kMaxCandidates)
-              break;
-          }
-        }
+        appendSubtree(appendSubtree, cur2);
         if ((int)candidates_.size() >= kMaxCandidates)
           break;
       }

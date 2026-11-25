@@ -1,5 +1,8 @@
 #include "Globals.h"
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <cwctype>
 #include <thread>
@@ -21,19 +24,139 @@ int g_trieRoot = 0;
 
 std::vector<UserPhrase> g_userPhrases;
 std::unordered_map<std::wstring, std::wstring> g_charFullCode;
-std::vector<std::pair<wchar_t, std::wstring>> g_punctMap;
+std::vector<std::pair<wchar_t, std::wstring>> g_punctMap = {
+    {L',', L"，"}, {L'.', L"。"},  {L';', L"；"}, {L':', L"："},
+    {L'?', L"？"}, {L'!', L"！"},  {L'(', L"（"}, {L')', L"）"},
+    {L'[', L"【"}, {L']', L"】"},  {L'{', L"「"}, {L'}', L"」"},
+    {L'/', L"/"},  {L'\\', L"、"}, {L'\'', L"‘"}, {L'"', L"“"}};
 JiDaConfig g_config;
 
-// ---------- 异步加载状态 ----------
+// ---------- 词库加载状态 ----------
 static std::wstring s_tablePath;
 static std::atomic<bool> s_tableLoaded{false};
 static std::atomic<bool> s_tableLoading{false};
+static constexpr uint32_t kDictionaryCacheVersion = 1;
+
+static bool ReadCacheValue(FILE* fp, void* value, size_t size) {
+  return fread(value, 1, size, fp) == size;
+}
+
+static bool GetFileMetadata(const std::wstring& path,
+                            uint64_t& size,
+                            uint64_t& lastWrite) {
+  WIN32_FILE_ATTRIBUTE_DATA data;
+  if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data))
+    return false;
+  size = (static_cast<uint64_t>(data.nFileSizeHigh) << 32) |
+         data.nFileSizeLow;
+  lastWrite = (static_cast<uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) |
+              data.ftLastWriteTime.dwLowDateTime;
+  return true;
+}
+
+static void BuildTrie();
+
+static void BuildCharacterFullCode() {
+  g_charFullCode.clear();
+  for (auto& e : g_entries) {
+    if (e.word.size() != 1)
+      continue;
+    auto it = g_charFullCode.find(e.word);
+    if (it == g_charFullCode.end() || e.code.size() > it->second.size() ||
+        (e.code.size() == it->second.size() && e.code < it->second))
+      g_charFullCode[e.word] = e.code;
+  }
+}
+
+static bool LoadJiDaTableCacheFile(const std::wstring& path) {
+  uint64_t sourceSize = 0, sourceLastWrite = 0;
+  if (!GetFileMetadata(path, sourceSize, sourceLastWrite))
+    return false;
+
+  FILE* fp = nullptr;
+  if (_wfopen_s(&fp, (path + L".jdc").c_str(), L"rb") != 0 || !fp)
+    return false;
+
+  char magic[4] = {};
+  uint32_t version = 0, entryCount = 0;
+  uint64_t cachedSize = 0, cachedLastWrite = 0;
+  uint16_t wildcardChar = 0;
+  bool valid = ReadCacheValue(fp, magic, sizeof(magic)) &&
+               ReadCacheValue(fp, &version, sizeof(version)) &&
+               ReadCacheValue(fp, &cachedSize, sizeof(cachedSize)) &&
+               ReadCacheValue(fp, &cachedLastWrite, sizeof(cachedLastWrite)) &&
+               ReadCacheValue(fp, &wildcardChar, sizeof(wildcardChar)) &&
+               ReadCacheValue(fp, &entryCount, sizeof(entryCount));
+  if (!valid || memcmp(magic, "JDTC", sizeof(magic)) != 0 ||
+      version != kDictionaryCacheVersion || cachedSize != sourceSize ||
+      cachedLastWrite != sourceLastWrite || wildcardChar < L'a' ||
+      wildcardChar > L'z' || entryCount > 2000000) {
+    fclose(fp);
+    return false;
+  }
+
+  std::vector<WubiEntry> entries;
+  entries.reserve(entryCount);
+  for (uint32_t i = 0; i < entryCount; ++i) {
+    uint32_t codeLength = 0, wordLength = 0;
+    if (!ReadCacheValue(fp, &codeLength, sizeof(codeLength)) ||
+        !ReadCacheValue(fp, &wordLength, sizeof(wordLength)) ||
+        codeLength == 0 || codeLength > 4 || wordLength == 0 ||
+        wordLength > 8192) {
+      valid = false;
+      break;
+    }
+
+    WubiEntry entry;
+    entry.code.resize(codeLength);
+    entry.word.resize(wordLength);
+    if (!ReadCacheValue(fp, entry.code.data(),
+                        codeLength * sizeof(wchar_t)) ||
+        !ReadCacheValue(fp, entry.word.data(),
+                        wordLength * sizeof(wchar_t))) {
+      valid = false;
+      break;
+    }
+    entry.level = static_cast<int>(codeLength) - 1;
+    entries.push_back(std::move(entry));
+  }
+  if (valid && fgetc(fp) != EOF)
+    valid = false;
+  fclose(fp);
+  if (!valid || entries.empty())
+    return false;
+
+  g_config.wildcardChar = static_cast<wchar_t>(wildcardChar);
+  g_entries = std::move(entries);
+  BuildTrie();
+  BuildCharacterFullCode();
+  return true;
+}
 
 void SetJiDaTablePath(const std::wstring& path) {
   s_tablePath = path;
 }
 bool IsJiDaTableLoaded() {
   return s_tableLoaded.load();
+}
+bool IsJiDaTableLoading() {
+  return s_tableLoading.load();
+}
+
+bool LoadJiDaTableCache() {
+  if (s_tableLoaded.load())
+    return true;
+  bool expected = false;
+  if (!s_tableLoading.compare_exchange_strong(expected, true))
+    return false;
+
+  bool ok = LoadJiDaTableCacheFile(s_tablePath);
+  if (ok) {
+    s_tableLoaded = true;
+    OutputDebugStringW(L"[JiDa] Dictionary cache loaded synchronously\n");
+  }
+  s_tableLoading = false;
+  return ok;
 }
 
 void LoadJiDaTableAsync() {
@@ -185,7 +308,7 @@ static void ParseSimpleFormat(FILE* fp, std::vector<WubiEntry>& entries) {
 
 static void BuildTrie() {
   g_trie.clear();
-  g_trie.reserve(g_entries.size() * 2 + 1);
+  g_trie.reserve(g_entries.size() + 1);
   g_trie.emplace_back();
   g_trieRoot = 0;
 
@@ -207,25 +330,6 @@ static void BuildTrie() {
     if (ok)
       g_trie[cur].ownEntries.push_back(i);
   }
-
-  struct Builder {
-    std::vector<TrieNode>& t;
-    void build(int n) {
-      for (int c = 0; c < 26; ++c)
-        if (t[n].children[c] >= 0)
-          build(t[n].children[c]);
-      auto& m = t[n].mergedEntries;
-      m = t[n].ownEntries;
-      for (int c = 0; c < 26; ++c) {
-        int ch = t[n].children[c];
-        if (ch >= 0) {
-          const auto& cm = t[ch].mergedEntries;
-          m.insert(m.end(), cm.begin(), cm.end());
-        }
-      }
-    }
-  };
-  Builder{g_trie}.build(g_trieRoot);
 }
 
 bool LoadJiDaTable(const std::wstring& path) {
@@ -253,30 +357,10 @@ bool LoadJiDaTable(const std::wstring& path) {
     ParseSimpleFormat(fp, entries);
   fclose(fp);
 
-  std::stable_sort(entries.begin(), entries.end(),
-                   [](const WubiEntry& a, const WubiEntry& b) {
-                     if (a.code.size() != b.code.size())
-                       return a.code.size() < b.code.size();
-                     return a.code < b.code;
-                   });
   g_entries = std::move(entries);
   BuildTrie();
+  BuildCharacterFullCode();
 
-  g_charFullCode.clear();
-  for (auto& e : g_entries) {
-    if (e.word.size() != 1)
-      continue;  // 只处理单字
-    auto it = g_charFullCode.find(e.word);
-    if (it == g_charFullCode.end() || e.code.size() > it->second.size())
-      g_charFullCode[e.word] = e.code;  // 保留最长编码作为全码
-  }
-
-  if (g_punctMap.empty()) {
-    g_punctMap = {{L',', L"，"}, {L'.', L"。"},  {L';', L"；"}, {L':', L"："},
-                  {L'?', L"？"}, {L'!', L"！"},  {L'(', L"（"}, {L')', L"）"},
-                  {L'[', L"【"}, {L']', L"】"},  {L'{', L"「"}, {L'}', L"」"},
-                  {L'/', L"/"},  {L'\\', L"、"}, {L'\'', L"‘"}, {L'"', L"“"}};
-  }
   return !g_entries.empty();
 }
 

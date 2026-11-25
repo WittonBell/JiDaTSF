@@ -22,7 +22,6 @@ struct WubiEntry {
 struct TrieNode {
   int children[26];
   std::vector<int> ownEntries;
-  std::vector<int> mergedEntries;
   TrieNode() { memset(children, -1, sizeof(children)); }
 };
 
@@ -78,6 +77,8 @@ inline int CandPageSize() {
 // 码表：路径 / 加载
 void SetJiDaTablePath(const std::wstring& path);
 bool IsJiDaTableLoaded();
+bool IsJiDaTableLoading();
+bool LoadJiDaTableCache();
 void LoadJiDaTableAsync();
 bool LoadJiDaTable(const std::wstring& path);  // 同步加载
 

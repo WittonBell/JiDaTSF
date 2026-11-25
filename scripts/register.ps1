@@ -144,6 +144,17 @@ if (-not $SkipDataCopy) {
             Copy-Item $_.FullName $dstData -Force
             Write-Host ("  + data\{0}" -f $_.Name) -ForegroundColor DarkGray
         }
+        $dictionaryPath = Join-Path $dstData 'jidian_wubi86.txt'
+        $cacheGenerator = Join-Path $PSScriptRoot 'build-JidaDictionaryCache.ps1'
+        if ((Test-Path -LiteralPath $dictionaryPath) -and
+            (Test-Path -LiteralPath $cacheGenerator)) {
+            try {
+                & $cacheGenerator -InputPath $dictionaryPath `
+                    -OutputPath ($dictionaryPath + '.jdc')
+            } catch {
+                Write-Warning "词库缓存生成失败，将回退到文本词库加载: $_"
+            }
+        }
     } else {
         Write-Warning "未找到 $srcData，跳过码表复制。"
     }
