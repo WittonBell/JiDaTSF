@@ -61,4 +61,6 @@ class CCandidateWindow {
   std::wstring _textHint;
   HFONT _hintFont = nullptr;
   int _hintHeight = 0;
+
+  bool _textCursorVisible = true;
 };

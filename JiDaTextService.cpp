@@ -473,7 +473,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
       }
       return S_OK;
     }
-	// ---------------- 标点处理 ----------------
+    // ---------------- 标点处理 ----------------
     // 临时英文模式下的标点：拼进缓冲区（用 VkToChar 取原字符）
     bool isPunctKey =
         (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
@@ -696,27 +696,39 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     std::wstring punct, firstCand;
     if (ch && _engine.OnPunctuation(ch, punct, firstCand)) {
       *pfEaten = TRUE;
-      if (!firstCand.empty())
-        _CommitAndEnd(pic, firstCand);
-      else
-        _CancelWithContext(pic);
 
+      // 1) 确定标点文本
       std::wstring outputPunct;
       if (_status.chinesePunctuation) {
         if (ch == L'\'' || ch == L'"')
-          outputPunct = _ProcessQuote(ch);  // 引号配对
+          outputPunct = _ProcessQuote(ch);
         else
-          outputPunct = punct;  // 其他标点用映射表
+          outputPunct = punct;
       } else {
-        outputPunct = std::wstring(1, ch);  // 半角
+        outputPunct = std::wstring(1, ch);
       }
 
-      _CommitAndEnd(pic, outputPunct);
+      // 2) 先手动记录首选到历史（在清空编码之前）
+      if (!firstCand.empty()) {
+        std::wstring code = _engine.Buffer();
+        if (!code.empty())
+          _engine.OnCommitted(code, firstCand);
+      }
+
+      // 3) 结束组合、清空编码（不再走组合路径）
+      _CancelWithContext(pic);
       _engine.Reset();
+
+      // 4) 一次性提交「首选+标点」
+      std::wstring combined;
+      if (!firstCand.empty())
+        combined = firstCand;
+      combined += outputPunct;
+      _CommitAndEnd(pic, combined);
+
       _HideCandidates();
       return S_OK;
     }
-    // 非映射标点（如 Shift+, 得到 '<'）：保留编码，按键交给宿主
     return S_OK;
   }
 
@@ -762,17 +774,21 @@ void CJiDaTextService::_HandleLetterResult(ITfContext* pic,
       _CommitAndEnd(pic, committed);
       _HideCandidates();
       break;
+
     case EngineAction::TopCommitAndContinue:
+      // 只提交首选 + 刷新候选显示；
+      // 不立即 _EnsureComposition，否则新组合的光标锚点可能落在「你」之前，
+      // 导致后续 SetText 覆盖首选。组合由下一次 UpdateCandidates 惰性创建。
       _CommitAndEnd(pic, committed);
-      _EnsureComposition(pic);
-      _SyncComposition(pic);
       _ShowCandidates(pic);
       break;
+
     case EngineAction::UpdateCandidates:
       _EnsureComposition(pic);
       _SyncComposition(pic);
       _ShowCandidates(pic);
       break;
+
     default:
       break;
   }

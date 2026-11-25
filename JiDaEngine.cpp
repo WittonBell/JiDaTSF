@@ -154,7 +154,7 @@ EngineAction JiDaEngine::OnLetter(wchar_t ch,
     buffer_ = std::wstring(1, ch);
     Query(buffer_);
     newBuffer = buffer_;
-    return EngineAction::Commit;
+    return EngineAction::TopCommitAndContinue;
   }
   if (buffer_.size() >= 4)
     return EngineAction::None;

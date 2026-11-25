@@ -57,4 +57,5 @@ class CPhraseWindow {
   ConfirmHandler _onConfirm;
 
   int _lastX = -1, _lastY = -1, _lastW = -1, _lastH = -1;
+  bool _cursorVisible = false;
 };

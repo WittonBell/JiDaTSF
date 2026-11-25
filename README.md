@@ -1,4 +1,4 @@
-# 极达五笔(JidaTSF) —— 极点五笔 TSF 移植
+# 极达五笔(JiDaTSF) —— 极点五笔 TSF 移植
 
 把极点五笔的操作习惯搬到 Windows TSF（Text Services Framework）框架，支持 Per-Monitor V2 高分辨率（高分屏 / 多屏不同缩放）显示。
 
@@ -76,10 +76,10 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister.ps1
 ### 路径
 
 ```
-JidaTSF/bin/x64/Release/data/jidian_wubi86.txt
+JiDaTSF/bin/x64/Release/data/jidian_wubi86.txt
 ```
 
-码表必须放在与 `JidaTSF.dll` 同目录的 `data\` 子目录下。`DllMain` 在加载 DLL 时按 DLL 所在路径查找。
+码表必须放在与 `JiDaTSF.dll` 同目录的 `data\` 子目录下。`DllMain` 在加载 DLL 时按 DLL 所在路径查找。
 
 ### 完整极点词库
 
@@ -93,21 +93,21 @@ JidaTSF/bin/x64/Release/data/jidian_wubi86.txt
 
 | 极点习惯 | 实现位置 | 说明 |
 |---|---|---|
-| 空格选首选 | `JidaEngine::OnSpace` | |
-| 数字键选词 | `JidaEngine::OnDigit` | 1–9 |
-| `;` 选第 2 重码 | `JidaEngine::OnSemicolon` | 编码非空时 |
-| `;` 日期 | `JidaEngine::OnSemicolonTail` | `;YYYY.M.D;` |
-| `;` 金额 | `JidaEngine::OnSemicolonTail` | `;金额;` |
-| 标点顶字上屏 | `JidaEngine::OnPunctuation` | 分两步提交 |
-| 四码唯一自动上屏 | `JidaConfig::autoCommitUnique` | 可关闭 |
+| 空格选首选 | `JiDaEngine::OnSpace` | |
+| 数字键选词 | `JiDaEngine::OnDigit` | 1–9 |
+| `;` 选第 2 重码 | `JiDaEngine::OnSemicolon` | 编码非空时 |
+| `;` 日期 | `JiDaEngine::OnSemicolonTail` | `;YYYY.M.D;` |
+| `;` 金额 | `JiDaEngine::OnSemicolonTail` | `;金额;` |
+| 标点顶字上屏 | `JiDaEngine::OnPunctuation` | 分两步提交 |
+| 四码唯一自动上屏 | `JiDaConfig::autoCommitUnique` | 可关闭 |
 | 四码后继续输入 | `EngineAction::TopCommitAndContinue` | 顶字不丢字 |
-| Z 重复 | `JidaEngine::OnLetter` | 空编码 Z |
-| Z 通配 | `JidaEngine::Query` | 展开 a–y |
-| 回车编码上屏 | `JidaEngine::OnEnter` | |
-| `-` / `=` 翻页 | `JidaTextService::OnKeyDown` | 也支持 PageUp/PageDown |
+| Z 重复 | `JiDaEngine::OnLetter` | 空编码 Z |
+| Z 通配 | `JiDaEngine::Query` | 展开 a–y |
+| 回车编码上屏 | `JiDaEngine::OnEnter` | |
+| `-` / `=` 翻页 | `JiDaTextService::OnKeyDown` | 也支持 PageUp/PageDown |
 | 鼠标选词 | `CCandidateWindow::_OnLButtonUp` | 回调 `OnPick` |
-| Shift 临时英文 | `JidaTextService::OnKeyDown` | 交给系统 |
-| 逐键提示 | `JidaEngine::Query` | 前缀扩展，短码优先 |
+| Shift 临时英文 | `JiDaTextService::OnKeyDown` | 交给系统 |
+| 逐键提示 | `JiDaEngine::Query` | 前缀扩展，短码优先 |
 | Per-Monitor V2 | `DpiHelper::EnablePerMonitorV2` | 清单 + 运行时 |
 | 候选窗口跨屏 DPI | `CCandidateWindow::WM_DPICHANGED` | |
 
@@ -117,7 +117,7 @@ JidaTSF/bin/x64/Release/data/jidian_wubi86.txt
 
 工程通过三处协同实现高分辨率正确显示：
 
-1. **进程清单**：`JidaTSF.manifest` 声明 `PerMonitorV2`
+1. **进程清单**：`JiDaTSF.manifest` 声明 `PerMonitorV2`
 2. **运行时**：`DllMain` 调用 `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`
 3. **候选窗口**：
    - `Show()` 前通过 `MonitorFromRect(caret)` 获取光标所在显示器
@@ -131,11 +131,10 @@ JidaTSF/bin/x64/Release/data/jidian_wubi86.txt
 
 ## 六、配置
 
-配置位于 `Globals.h` 中的 `JidaConfig` 结构体：
+配置位于 `Globals.h` 中的 `JiDaConfig` 结构体：
 
 ```cpp
 struct JiDaConfig {
-   bool autoCommitUnique = true;                    // 四码唯一自动上屏
   bool zRepeat = true;                             // Z 重复上次上屏
   bool zWildcard = true;                           // Z 通配
   bool semicolonSecond = true;                     // 分号选第二重码
@@ -200,12 +199,12 @@ CCandidateWindow::Show
 
 | 需求 | 扩展位置 |
 |---|---|
-| 用户词频 | `JidaEngine::Query` 排序后 + `_CommitAndEnd` 回写 |
+| 用户词频 | `JiDaEngine::Query` 排序后 + `_CommitAndEnd` 回写 |
 | 简繁转换 | `_CommitAndEnd` 提交前做字符映射 |
 | 皮肤 | `CCandidateWindow::_OnPaint` 自绘 + `SetLayeredWindowAttributes` |
 | 竖排候选 | `CCandidateWindow::_UpdateSize` + `_OnPaint` 布局 |
-| 配置持久化 | 在 `DllMain` 中读取 `%APPDATA%\JidaTSF\config.ini` 覆盖 `g_config` |
-| 更多分号规则 | `JidaEngine::OnSemicolonTail` 中增加分支 |
+| 配置持久化 | 在 `DllMain` 中读取 `%APPDATA%\JiDaTSF\config.ini` 覆盖 `g_config` |
+| 更多分号规则 | `JiDaEngine::OnSemicolonTail` 中增加分支 |
 
 ---
 

@@ -38,14 +38,17 @@ void CCandidateWindow::Destroy() {
     _hintFont = nullptr;
   }
   if (_hwnd) {
+    KillTimer(_hwnd, 3);
     DestroyWindow(_hwnd);
     _hwnd = nullptr;
   }
 }
 
 void CCandidateWindow::Hide() {
-  if (_hwnd)
-    ShowWindow(_hwnd, SW_HIDE);
+  if (!_hwnd)
+    return;
+  KillTimer(_hwnd, 3);
+  ShowWindow(_hwnd, SW_HIDE);
 }
 
 void CCandidateWindow::_RebuildFont() {
@@ -81,6 +84,8 @@ void CCandidateWindow::Show(const std::vector<CandidateItem>& items,
   _textMode = false;
   _textContent.clear();
   _textHint.clear();
+  if (_hwnd)
+    KillTimer(_hwnd, 3);
   _items = items;
   if (selected < 0)
     selected = 0;
@@ -176,6 +181,11 @@ void CCandidateWindow::ShowText(const std::wstring& text,
     _lastH = h;
   } else if (!IsWindowVisible(_hwnd)) {
     ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
+  }
+  if (_textMode) {
+    KillTimer(_hwnd, 3);
+    SetTimer(_hwnd, 3, GetCaretBlinkTime(), nullptr);
+    _textCursorVisible = true;
   }
   InvalidateRect(_hwnd, nullptr, FALSE);
 }
@@ -318,6 +328,13 @@ LRESULT CALLBACK CCandidateWindow::_WndProc(HWND h,
         self->OnContextMenu(pt);
       return 0;
     }
+    case WM_TIMER:
+      if (w == 3 && self->_textMode) {
+        self->_textCursorVisible = !self->_textCursorVisible;
+        InvalidateRect(h, nullptr, FALSE);
+        return 0;
+      }
+      break;
   }
   return DefWindowProc(h, msg, w, l);
 }
@@ -355,6 +372,27 @@ LRESULT CCandidateWindow::_OnPaint() {
     DrawTextW(mem, _textHint.c_str(), (int)_textHint.size(), &hintRc,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(mem, oldH);
+
+    // ---- 闪烁光标 ----
+    if (_textCursorVisible) {
+      SIZE sz = {0, 0};
+      HGDIOBJ cf = SelectObject(mem, _font);
+      GetTextExtentPoint32W(mem, _textContent.c_str(), (int)_textContent.size(),
+                            &sz);
+      SelectObject(mem, cf);
+
+      int cx = _padding + (int)sz.cx + MulDiv(2, _dpi, 96);
+      int cTop = _padding + MulDiv(4, _dpi, 96);
+      int cBot = _padding + _rowHeight - MulDiv(4, _dpi, 96);
+
+      HPEN pen = CreatePen(PS_SOLID, MulDiv(1, _dpi, 96), RGB(30, 30, 30));
+      HGDIOBJ op = SelectObject(mem, pen);
+      MoveToEx(mem, cx, cTop, nullptr);
+      LineTo(mem, cx, cBot);
+      SelectObject(mem, op);
+      DeleteObject(pen);
+    }
+    // ---- 光标结束 ----
 
     BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
     SelectObject(mem, oldB);

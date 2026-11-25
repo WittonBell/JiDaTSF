@@ -23,6 +23,7 @@ bool CPhraseWindow::Create(HINSTANCE inst) {
   if (_hwnd) {
     _dpi = 96;
     _RebuildFont();
+    SetTimer(_hwnd, 2, GetCaretBlinkTime(), nullptr);
   }
   return _hwnd != nullptr;
 }
@@ -37,6 +38,7 @@ void CPhraseWindow::Destroy() {
     _smallFont = nullptr;
   }
   if (_hwnd) {
+    KillTimer(_hwnd, 2);
     DestroyWindow(_hwnd);
     _hwnd = nullptr;
   }
@@ -121,7 +123,7 @@ void CPhraseWindow::_UpdateSize() {
   LONG contentW = (std::max)(textSz.cx, codeSz.cx);
   contentW = (std::max)(contentW, hintSz.cx);
 
-  int w = contentW + _padding * 2;
+  int w = contentW + _padding * 2 + MulDiv(4, _dpi, 96);
   int minW = MulDiv(360, _dpi, 96);
   if (w < minW)
     w = minW;
@@ -287,6 +289,13 @@ LRESULT CALLBACK CPhraseWindow::_WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
       return self->_OnDpiChanged(w, l);
     case WM_MOUSEACTIVATE:
       return MA_NOACTIVATE;
+    case WM_TIMER:
+      if (w == 2) {
+        self->_cursorVisible = !self->_cursorVisible;
+        InvalidateRect(h, nullptr, FALSE);
+        return 0;
+      }
+      break;
   }
   return DefWindowProc(h, msg, w, l);
 }
@@ -341,6 +350,25 @@ LRESULT CPhraseWindow::_OnPaint() {
   RECT hintRc = {_padding, rc.bottom - _padding - _hintHeight,
                  rc.right - _padding, rc.bottom - _padding};
   DrawTextW(mem, hint, -1, &hintRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+  // 闪烁光标：画在当前文本末尾
+  if (_cursorVisible) {
+    SIZE textSz = {0, 0};
+    HGDIOBJ oldCursorFont = SelectObject(mem, _font);
+    GetTextExtentPoint32W(mem, text.c_str(), (int)text.size(), &textSz);
+    SelectObject(mem, oldCursorFont);
+
+    int cursorX = _padding + (int)textSz.cx + MulDiv(2, _dpi, 96);
+    int cursorTop = _padding + MulDiv(4, _dpi, 96);
+    int cursorBottom = _padding + _rowHeight - MulDiv(4, _dpi, 96);
+
+    HPEN cursorPen = CreatePen(PS_SOLID, MulDiv(1, _dpi, 96), RGB(30, 30, 30));
+    HGDIOBJ oldPen2 = SelectObject(mem, cursorPen);
+    MoveToEx(mem, cursorX, cursorTop, nullptr);
+    LineTo(mem, cursorX, cursorBottom);
+    SelectObject(mem, oldPen2);
+    DeleteObject(cursorPen);
+  }
 
   SelectObject(mem, oldF);
   BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
