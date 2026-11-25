@@ -340,29 +340,33 @@ void JiDaEngine::OnCommitted(const std::wstring& code,
                              const std::wstring& text) {
   if (code.empty() || text.empty())
     return;
-  if (text.size() > 4)
-    return;
   for (wchar_t c : code)
     if (c < L'a' || c > L'z')
       return;
-  for (wchar_t c : text)
-    if (c < 0x4E00 || c > 0x9FFF) // 只记录汉字
+  for (wchar_t c : text) {
+    if (c < 0x4E00 || c > 0x9FFF)  { // 只记录汉字
       return;
+    }
+  }
 
-  // 连续同字跳过（避免「你你你」）
-  if (!recentCommits_.empty() && recentCommits_.back().text == text)
+  // 连续单字上屏时去重；词组上屏则逐字加入历史。
+  if (text.size() == 1 && !recentCommits_.empty() &&
+      recentCommits_.back().text == text)
     return;
 
-  std::wstring fullCode;
-  auto it = g_charFullCode.find(text);
-  if (it != g_charFullCode.end())
-    fullCode = it->second;
-  else
-    fullCode = code;
+  for (wchar_t c : text) {
+    std::wstring character(1, c);
+    std::wstring fullCode;
+    auto it = g_charFullCode.find(character);
+    if (it != g_charFullCode.end())
+      fullCode = it->second;
+    else
+      fullCode = code;
 
-  recentCommits_.push_back({code, fullCode, text});
-  if (recentCommits_.size() > 20)
-    recentCommits_.erase(recentCommits_.begin());
+    recentCommits_.push_back({code, fullCode, character});
+    if (recentCommits_.size() > 20)
+      recentCommits_.erase(recentCommits_.begin());
+  }
 }
 bool JiDaEngine::CreateUserPhrase(std::wstring& outCode,
                                   std::wstring& outText) {

@@ -176,7 +176,7 @@ std::wstring CPhraseWindow::_ComputeCode() const {
   if (_selectedCount < 2)
     return L"";
   std::vector<PhraseEntry> sel(_entries.end() - _selectedCount, _entries.end());
-  return _BuildCode(sel);
+  return L"【" + _BuildCode(sel) + L"】";
 }
 
 std::wstring CPhraseWindow::_BuildCode(const std::vector<PhraseEntry>& sel) {
