@@ -637,7 +637,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   }
 
   // 分号：有编码 -> 选第二重码；无编码 -> 继续往下走标点处理
-  if (wParam == VK_OEM_1) {
+  if (wParam == VK_OEM_1 && g_config.semicolonSecond) {
     if (_engine.IsWaitingDateOrAmount()) {
       std::wstring committed;
       EngineAction act = _engine.OnSemicolonTail(L';', committed);
