@@ -285,29 +285,20 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 5. Shift + 字母
+  // 5. Shift
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-  if (shift && wParam >= 'A' && wParam <= 'Z') {
-    if (g_config.shiftDirectCommit)
-      return S_OK;  // 开关打开 → 宿主输出大写
-    if (!_status.chinese) {
-      // 英文模式，宿主输出大写
-      return S_OK;
-    }
-    *pfEaten = TRUE;  // 开关关闭 → 进入临时英文（在 OnKeyDown 处理）
-    return S_OK;
-  }
-
-  // 右Shift键切换中英文
-  if ((GetKeyState(VK_RSHIFT) & 0x8000) != 0) {
-    _OnStatusCommand(StatusCommand::ToggleChinese);
-    if (!_status.chinese) {
-      // 如果不再是中文模式，但有候选框，则关闭
-      if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
-        _CancelWithContext(pic);
-        _HideCandidates();
+  if (shift) {
+    // Shift + 字母
+    if (wParam >= 'A' && wParam <= 'Z') {
+      if (g_config.shiftDirectCommit)
+        return S_OK;  // 开关打开 → 宿主输出大写
+      if (!_status.chinese) {
+        // 英文模式，宿主输出大写
+        return S_OK;
       }
     }
+    // 让 OnKeyDown 处理，可能是进入临时英文状态，也可能是切换中英文模式
+    *pfEaten = TRUE;
     return S_OK;
   }
 
@@ -390,6 +381,20 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   }
   _activeCtx = pic;
   _activeCtx->AddRef();
+
+  // 右Shift键切换中英文
+  if ((GetKeyState(VK_RSHIFT) & 0x8000) != 0) {
+    _OnStatusCommand(StatusCommand::ToggleChinese);
+    if (!_status.chinese) {
+      *pfEaten = TRUE;
+      // 如果不再是中文模式，但有候选框，则关闭
+      if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
+        _CancelWithContext(pic);
+        _HideCandidates();
+      }
+    }
+    return S_OK;
+  }
 
   // ---------------- 英文模式 ----------------
   // 英文模式：全角时接管并转全角输出；半角时全部交宿主
@@ -597,6 +602,15 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   if (wParam == VK_SPACE) {
     if (_engine.IsWaitingDateOrAmount()) {
       *pfEaten = TRUE;
+      return S_OK;
+    }
+    if (!_engine.Buffer().empty() && _engine.Candidates().empty()) {
+      // 如果没有候选项，则关闭候选框
+      *pfEaten = TRUE;
+      HRESULT hr = _CancelWithContext(pic);
+      if (SUCCEEDED(hr)) {
+        _HideCandidates();
+      }
       return S_OK;
     }
     std::wstring committed;
@@ -960,18 +974,32 @@ void CJiDaTextService::_Cancel() {
   _tempEnglishBuffer.clear();
 }
 
-void CJiDaTextService::_CancelWithContext(ITfContext* pic) {
+HRESULT CJiDaTextService::_CancelWithContext(ITfContext* pic) {
   if (_composition) {
     auto* s = new CCommitSession(pic, _composition, L"");
-    pic->RequestEditSession(_clientId, s, TF_ES_SYNC | TF_ES_READWRITE,
-                            nullptr);
+    HRESULT hrSession = E_FAIL;
+    HRESULT hrRequest = pic->RequestEditSession(
+        _clientId, s, TF_ES_SYNC | TF_ES_READWRITE, &hrSession);
+
     s->Release();
+    if (FAILED(hrRequest)) {
+      OutputDebugStringW(L"[JiDa] Cancel: RequestEditSession FAILED\n");
+      return hrRequest;
+    }
+
+    if (FAILED(hrSession)) {
+      OutputDebugStringW(L"[JiDa] Cancel: DoEditSession FAILED\n");
+      return hrSession;
+    }
+
+    // 只有确认 Composition 已经成功结束，才释放它
     _composition->Release();
     _composition = nullptr;
   }
   _engine.Reset();
   _tempEnglishMode = false;
   _tempEnglishBuffer.clear();
+  return S_OK;
 }
 
 STDMETHODIMP CJiDaTextService::OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) {

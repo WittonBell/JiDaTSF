@@ -45,7 +45,7 @@ class CJiDaTextService : public ITfTextInputProcessor,
   void _ShowCandidates(ITfContext* pic);
   void _HideCandidates();
   void _Cancel();
-  void _CancelWithContext(ITfContext* pic);
+  HRESULT _CancelWithContext(ITfContext* pic);
   void _HandleLetterResult(ITfContext* pic,
                            EngineAction act,
                            std::wstring& committed,

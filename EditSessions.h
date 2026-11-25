@@ -85,21 +85,37 @@ class CCommitSession : public ITfEditSession {
   }
 
   STDMETHODIMP DoEditSession(TfEditCookie ec) override {
-    // ---------- 1. 有组合：替换组合文本 + 结束组合 ----------
+    // ---------- 1. 有组合：替换组合文本 + 设置光标 + 结束组合 ----------
     if (_comp) {
       ITfRange* r = nullptr;
-      if (SUCCEEDED(_comp->GetRange(&r)) && r) {
-        HRESULT hrSet = r->SetText(ec, 0, _text.c_str(), (LONG)_text.size());
+      HRESULT hr = _comp->GetRange(&r);
+      if (FAILED(hr) || !r)
+        return FAILED(hr) ? hr : E_FAIL;
+
+      hr = r->SetText(ec, 0, _text.c_str(), static_cast<LONG>(_text.size()));
+      if (FAILED(hr)) {
         r->Release();
-        if (SUCCEEDED(hrSet)) {
-          HRESULT hrEnd = _comp->EndComposition(ec);
-          OutputDebugStringW(SUCCEEDED(hrEnd)
-                                 ? L"[JiDa] Commit: composition ended OK\n"
-                                 : L"[JiDa] Commit: EndComposition FAILED\n");
-          if (SUCCEEDED(hrEnd))
-            return S_OK;
-        }
+        return hr;
       }
+
+      // 无论提交还是取消，都明确折叠选区
+      hr = r->Collapse(ec, TF_ANCHOR_END);
+      if (SUCCEEDED(hr)) {
+        TF_SELECTION sel = {};
+        sel.range = r;
+        sel.style.ase = TF_AE_NONE;
+        sel.style.fInterimChar = FALSE;
+
+        hr = _ctx->SetSelection(ec, 1, &sel);
+      }
+      r->Release();
+      if (FAILED(hr))
+        return hr;
+
+      hr = _comp->EndComposition(ec);
+      if (FAILED(hr))
+        return hr;
+      return S_OK;
     }
 
     // ---------- 2. 无组合：用当前 selection range 插入（最稳） ----------
