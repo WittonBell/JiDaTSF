@@ -261,6 +261,18 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
     return S_OK;
   }
 
+  // 1.5 Shift + 空格：切换全半角
+  if ((GetKeyState(VK_SHIFT) & 0x8000) && wParam == VK_SPACE) {
+    *pfEaten = TRUE;
+    return S_OK;
+  }
+
+  // 1.6 Ctrl + 句号：切换中英文标点
+  if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == VK_OEM_PERIOD) {
+    *pfEaten = TRUE;
+    return S_OK;
+  }
+
   // 2. Ctrl+= → 造词（临时英文模式下不接管）
   if (!_tempEnglishMode && (GetKeyState(VK_CONTROL) & 0x8000) &&
       (wParam == VK_OEM_PLUS || wParam == VK_ADD)) {
@@ -396,6 +408,29 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   }
   _activeCtx = pic;
   _activeCtx->AddRef();
+
+  // Ctrl + 句号：切换中英文标点
+  if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == VK_OEM_PERIOD) {
+    *pfEaten = TRUE;
+    _status.chinesePunctuation = !_status.chinesePunctuation;
+    if (_statusWnd)
+      _statusWnd->UpdateStatus(_status);
+    OutputDebugStringW(_status.chinesePunctuation
+                           ? L"[JiDa] TogglePunctuation: 中文标点\n"
+                           : L"[JiDa] TogglePunctuation: 英文标点\n");
+    return S_OK;
+  }
+
+  // Shift + 空格：切换全半角
+  if ((GetKeyState(VK_SHIFT) & 0x8000) && wParam == VK_SPACE) {
+    *pfEaten = TRUE;
+    _status.fullShape = !_status.fullShape;
+    if (_statusWnd)
+      _statusWnd->UpdateStatus(_status);
+    OutputDebugStringW(_status.fullShape ? L"[JiDa] ToggleFullShape: 全角\n"
+                                         : L"[JiDa] ToggleFullShape: 半角\n");
+    return S_OK;
+  }
 
   // 右Shift键切换中英文
   if ((GetKeyState(VK_RSHIFT) & 0x8000) != 0) {
