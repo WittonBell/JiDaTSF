@@ -78,5 +78,6 @@ class CJiDaTextService : public ITfTextInputProcessor,
 
   bool _tempEnglishMode = false;
   std::wstring _tempEnglishBuffer;
+  bool _shiftDownForKey = false;
   void _ShowTempEnglish(ITfContext* pic);
 };
