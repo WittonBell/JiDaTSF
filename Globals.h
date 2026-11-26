@@ -77,7 +77,9 @@ inline int CandPageSize() {
 // 码表：路径 / 加载
 void SetJiDaTablePath(const std::wstring& path);
 bool IsJiDaTableLoaded();
+bool IsJiDaTableLoading();
 bool LoadJiDaTable();  // 同步加载极点 MB 词库
+void LoadJiDaTableAsync();
 
 // 用户词
 void LoadUserPhrases();

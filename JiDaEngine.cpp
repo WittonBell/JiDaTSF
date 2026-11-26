@@ -83,26 +83,39 @@ void JiDaEngine::Query(const std::wstring& code) {
     }
   }
 
-  auto appendSubtree = [&](auto&& self, int node) -> bool {
-    for (int idx : g_trie[node].ownEntries) {
-      auto& entry = g_entries[idx];
-      if (seen.insert(std::wstring_view(entry.word)).second) {
-        candidates_.push_back({entry.word, entry.code});
-        if ((int)candidates_.size() >= kMaxCandidates)
-          return true;
+  auto appendCodeLength =
+      [&](auto&& self, int node, size_t depth, size_t targetDepth) -> bool {
+    if (depth == targetDepth) {
+      for (int idx : g_trie[node].ownEntries) {
+        auto& entry = g_entries[idx];
+        if (seen.insert(std::wstring_view(entry.word)).second) {
+          candidates_.push_back({entry.word, entry.code});
+          if ((int)candidates_.size() >= kMaxCandidates)
+            return true;
+        }
       }
+      return false;
     }
+
     for (int child : g_trie[node].children) {
-      if (child >= 0 && self(self, child))
+      if (child >= 0 && self(self, child, depth + 1, targetDepth))
         return true;
     }
     return false;
   };
+  auto appendSubtree = [&](int node, size_t prefixLength) {
+    if ((int)candidates_.size() >= kMaxCandidates)
+      return;
+    for (size_t codeLength = prefixLength; codeLength <= 4; ++codeLength) {
+      if (appendCodeLength(appendCodeLength, node, prefixLength, codeLength))
+        return;
+    }
+  };
 
-  // 1. 精确匹配 + 前缀匹配；遍历顺序与旧的合并索引一致。
+  // Match exact and longer codes in old short-code-first candidate order.
   int cur = TrieWalk(code);
   if (cur >= 0)
-    appendSubtree(appendSubtree, cur);
+    appendSubtree(cur, code.size());
 
   // 2. Z 通配：将 wildcardChar 替换为 a-y 逐一展开
   if (g_config.zWildcard) {
@@ -117,7 +130,7 @@ void JiDaEngine::Query(const std::wstring& code) {
         int cur2 = TrieWalk(expanded);
         if (cur2 < 0)
           continue;
-        appendSubtree(appendSubtree, cur2);
+        appendSubtree(cur2, code.size());
         if ((int)candidates_.size() >= kMaxCandidates)
           break;
       }

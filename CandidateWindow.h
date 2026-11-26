@@ -9,9 +9,11 @@
 class CCandidateWindow {
  public:
   std::function<void(int)> OnPick;  // 回调：被点/悬停的候选绝对索引
+  std::function<void()> OnTableLoaded;
 
   bool Create(HINSTANCE hInst);
   void Destroy();
+  void WatchForTableLoad();
   void Show(const std::vector<CandidateItem>& items,
             int selected,
             RECT rcCaret,

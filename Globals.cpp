@@ -7,6 +7,8 @@
 #include <cwctype>
 #include <iterator>
 #include <mutex>
+#include <system_error>
+#include <thread>
 #include "Config.h"
 
 HINSTANCE g_hInstance = nullptr;
@@ -35,6 +37,7 @@ JiDaConfig g_config;
 // ---------- 词库加载状态 ----------
 static std::wstring s_tablePath;
 static std::atomic<bool> s_tableLoaded{false};
+static std::atomic<bool> s_tableLoading{false};
 static std::mutex s_tableLoadMutex;
 static constexpr size_t kMbPhraseOffset = 0x1B620;
 
@@ -178,6 +181,10 @@ bool IsJiDaTableLoaded() {
   return s_tableLoaded.load();
 }
 
+bool IsJiDaTableLoading() {
+  return s_tableLoading.load();
+}
+
 bool LoadJiDaTable() {
   std::lock_guard<std::mutex> lock(s_tableLoadMutex);
   if (s_tableLoaded.load())
@@ -215,12 +222,6 @@ bool LoadJiDaTable() {
     }
   }
 
-  std::stable_sort(entries.begin(), entries.end(),
-                   [](const WubiEntry& a, const WubiEntry& b) {
-                     if (a.code.size() != b.code.size())
-                       return a.code.size() < b.code.size();
-                     return a.code < b.code;
-                   });
   g_entries = std::move(entries);
   BuildTrie();
   BuildCharacterFullCode();
@@ -232,6 +233,27 @@ bool LoadJiDaTable() {
              g_entries.size());
   OutputDebugStringW(message);
   return loaded;
+}
+
+void LoadJiDaTableAsync() {
+  if (s_tableLoaded.load())
+    return;
+
+  bool expected = false;
+  if (!s_tableLoading.compare_exchange_strong(expected, true))
+    return;
+
+  try {
+    std::thread([]() {
+      bool loaded = LoadJiDaTable();
+      if (!loaded)
+        OutputDebugStringW(L"[JiDa] Async MB dictionary load failed\n");
+      s_tableLoading = false;
+    }).detach();
+  } catch (const std::system_error&) {
+    s_tableLoading = false;
+    OutputDebugStringW(L"[JiDa] Failed to start MB dictionary worker\n");
+  }
 }
 
 // ---------- 用户词 ----------
