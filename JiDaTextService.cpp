@@ -6,6 +6,15 @@
 #include "SettingWindow.h"
 
 static wchar_t VkToChar(WPARAM vk, LPARAM lParam) {
+  if (vk >= '0' && vk <= '9' && (GetKeyState(VK_SHIFT) & 0x8000)) {
+    static constexpr wchar_t shiftedDigits[] = L")!@#$%^&*(";
+    return shiftedDigits[vk - '0'];
+  }
+  if (vk == VK_OEM_3 && (GetKeyState(VK_SHIFT) & 0x8000))
+    return L'~';
+  if (vk == VK_OEM_MINUS && (GetKeyState(VK_SHIFT) & 0x8000))
+    return L'-';
+
   BYTE ks[256];
   if (!GetKeyboardState(ks))
     return 0;
@@ -299,7 +308,9 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
     } else if (wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
                wParam == VK_OEM_1 || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
                wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
-               wParam == VK_OEM_7) {
+               wParam == VK_OEM_7 || wParam == VK_OEM_MINUS ||
+               wParam == VK_OEM_PLUS || wParam == VK_SUBTRACT ||
+               wParam == VK_ADD) {
       *pfEaten = TRUE;
     }
     return S_OK;
@@ -308,6 +319,26 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
   // 5. Shift
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift) {
+    if (wParam >= '0' && wParam <= '9' &&
+        ((!_status.chinese && !_status.fullShape) ||
+         (_status.chinese && !_status.chinesePunctuation &&
+          !_status.fullShape))) {
+      return S_OK;
+    }
+    if (wParam == VK_OEM_PLUS &&
+        ((!_status.chinese && !_status.fullShape) ||
+         (_status.chinese && !_status.chinesePunctuation &&
+          !_status.fullShape))) {
+      return S_OK;
+    }
+    if (wParam == VK_OEM_3 &&
+        ((!_status.chinese && !_status.fullShape) ||
+         (_status.chinese && !_status.chinesePunctuation &&
+          !_status.fullShape && _engine.Buffer().empty() &&
+          !_engine.IsWaitingDateOrAmount()))) {
+      return S_OK;
+    }
+
     // 英文模式 + 全角 + Shift+字母：吞掉按键，让 OnKeyDown 走全角大写输出
     if (!_status.chinese && _status.fullShape && wParam >= 'A' &&
         wParam <= 'Z') {
@@ -342,7 +373,9 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
       else if (wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
                wParam == VK_OEM_1 || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
                wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
-               wParam == VK_OEM_7)
+               wParam == VK_OEM_7 || wParam == VK_OEM_MINUS ||
+               wParam == VK_OEM_PLUS || wParam == VK_SUBTRACT ||
+               wParam == VK_ADD)
         eat = true;
       if (eat)
         *pfEaten = TRUE;
@@ -360,6 +393,8 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
   }
   if (wParam >= '0' && wParam <= '9') {
     if (hasInput && hasCand)
+      *pfEaten = TRUE;
+    else if (_status.fullShape && !hasInput)
       *pfEaten = TRUE;
     return S_OK;
   }
@@ -388,7 +423,9 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
   // 标点键：有编码 / 中文标点 / 全角 —— 任意一项为真都要吞
   if (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA || wParam == VK_OEM_PERIOD ||
       wParam == VK_OEM_2 || wParam == VK_OEM_3 || wParam == VK_OEM_4 ||
-      wParam == VK_OEM_5 || wParam == VK_OEM_6 || wParam == VK_OEM_7) {
+      wParam == VK_OEM_5 || wParam == VK_OEM_6 || wParam == VK_OEM_7 ||
+      wParam == VK_OEM_MINUS || wParam == VK_OEM_PLUS ||
+      wParam == VK_SUBTRACT || wParam == VK_ADD) {
     if (hasInput || _status.chinesePunctuation || _status.fullShape)
       *pfEaten = TRUE;
     return S_OK;
@@ -432,8 +469,11 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 右Shift键切换中英文
-  if ((GetKeyState(VK_RSHIFT) & 0x8000) != 0) {
+  // 仅右 Shift 键本身切换中英文，不能把按住右 Shift 的组合键当作切换命令。
+  bool rightShiftKey =
+      wParam == VK_RSHIFT ||
+      (wParam == VK_SHIFT && ((lParam >> 16) & 0xFF) == 0x36);
+  if (rightShiftKey && (GetKeyState(VK_RSHIFT) & 0x8000) != 0) {
     _OnStatusCommand(StatusCommand::ToggleChinese);
     if (!_status.chinese) {
       *pfEaten = TRUE;
@@ -460,6 +500,10 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
         *pfEaten = TRUE;
         _CommitAndEnd(pic, std::wstring(1, ch));
       }
+    } else if (wParam == VK_OEM_MINUS &&
+               (GetKeyState(VK_SHIFT) & 0x8000)) {
+      *pfEaten = TRUE;
+      _CommitAndEnd(pic, L"-");
     }
     return S_OK;
   }
@@ -538,7 +582,9 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
         (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
          wParam == VK_OEM_PERIOD || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
          wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
-         wParam == VK_OEM_7);
+         wParam == VK_OEM_7 || wParam == VK_OEM_MINUS ||
+         wParam == VK_OEM_PLUS || wParam == VK_SUBTRACT ||
+         wParam == VK_ADD);
     if (isPunctKey) {
       wchar_t ch = VkToChar(wParam, lParam);
       if (ch) {
@@ -568,6 +614,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     _ShowTempEnglish(pic);
     return S_OK;
   }
+  bool shiftedNumberRowKey = shift && wParam >= '0' && wParam <= '9';
 
   // 上下键：竖向布局时移动选中，横向布局时翻页
   if (wParam == VK_UP || wParam == VK_DOWN) {
@@ -596,21 +643,26 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
   // 翻页
-  if (wParam == VK_PRIOR || wParam == VK_OEM_MINUS) {
+  if (wParam == VK_PRIOR ||
+      (wParam == VK_OEM_MINUS && !shift)) {
     if (!_engine.Candidates().empty()) {
       *pfEaten = TRUE;
       _engine.MovePage(-1);
       _ShowCandidates(pic);
+      return S_OK;
     }
-    return S_OK;
+    if (wParam == VK_PRIOR)
+      return S_OK;
   }
-  if (wParam == VK_NEXT || wParam == VK_OEM_PLUS) {
+  if (wParam == VK_NEXT || (wParam == VK_OEM_PLUS && !shift)) {
     if (!_engine.Candidates().empty()) {
       *pfEaten = TRUE;
       _engine.MovePage(1);
       _ShowCandidates(pic);
+      return S_OK;
     }
-    return S_OK;
+    if (wParam == VK_NEXT)
+      return S_OK;
   }
 
   // 字母
@@ -625,8 +677,16 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
+  // 全角状态下，中文模式中未参与选词的数字也要转换后直接上屏。
+  if (_status.fullShape && wParam >= '0' && wParam <= '9' &&
+      _engine.Buffer().empty() && !_engine.IsWaitingDateOrAmount()) {
+    *pfEaten = TRUE;
+    _CommitAndEnd(pic, std::wstring(1, (wchar_t)wParam));
+    return S_OK;
+  }
+
   // 数字选词
-  if (wParam >= '1' && wParam <= '9') {
+  if (!shiftedNumberRowKey && wParam >= '1' && wParam <= '9') {
     if (_engine.IsWaitingDateOrAmount()) {
       std::wstring committed;
       EngineAction act = _engine.OnSemicolonTail((wchar_t)wParam, committed);
@@ -734,6 +794,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
 
   // 日期/金额等待态下的数字/点
   if (_engine.IsWaitingDateOrAmount() &&
+      !shiftedNumberRowKey &&
       (iswdigit((wchar_t)wParam) || wParam == VK_OEM_PERIOD)) {
     std::wstring committed;
     EngineAction act = _engine.OnSemicolonTail((wchar_t)wParam, committed);
@@ -753,7 +814,9 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
       (wParam == VK_OEM_1 || wParam == VK_OEM_COMMA ||
        wParam == VK_OEM_PERIOD || wParam == VK_OEM_2 || wParam == VK_OEM_3 ||
        wParam == VK_OEM_4 || wParam == VK_OEM_5 || wParam == VK_OEM_6 ||
-       wParam == VK_OEM_7);
+       wParam == VK_OEM_7 || wParam == VK_OEM_MINUS ||
+       wParam == VK_OEM_PLUS || wParam == VK_SUBTRACT ||
+       wParam == VK_ADD || shiftedNumberRowKey);
 
   // 情况 1：有编码 -> 顶字上屏后输出标点
   if (!_engine.Buffer().empty()) {
@@ -798,7 +861,10 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   }
 
   // 情况 2：无编码但中文标点或全角 -> 直接输出转换后的标点
-  if (isPunctKey && (_status.chinesePunctuation || _status.fullShape)) {
+  if (isPunctKey &&
+      (_status.chinesePunctuation || _status.fullShape ||
+       (wParam == VK_OEM_MINUS && shift) ||
+       (wParam == VK_OEM_3 && shift))) {
     wchar_t ch = VkToChar(wParam, lParam);
     if (ch) {
       *pfEaten = TRUE;

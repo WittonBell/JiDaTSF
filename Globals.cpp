@@ -26,7 +26,10 @@ std::vector<UserPhrase> g_userPhrases;
 std::unordered_map<std::wstring, std::wstring> g_charFullCode;
 std::vector<std::pair<wchar_t, std::wstring>> g_punctMap = {
     {L',', L"，"}, {L'.', L"。"},  {L';', L"；"}, {L':', L"："},
-    {L'?', L"？"}, {L'!', L"！"},  {L'(', L"（"}, {L')', L"）"},
+    {L'?', L"？"}, {L'!', L"！"},  {L'@', L"·"},  {L'#', L"#"},
+    {L'$', L"￥"}, {L'%', L"%"},  {L'^', L"……"}, {L'&', L"—"},
+    {L'*', L"*"},  {L'(', L"（"}, {L')', L"）"}, {L'-', L"——"},
+    {L'+', L"+"},  {L'~', L"~"},
     {L'[', L"【"}, {L']', L"】"},  {L'{', L"「"}, {L'}', L"」"},
     {L'/', L"/"},  {L'\\', L"、"}, {L'\'', L"‘"}, {L'"', L"“"}};
 JiDaConfig g_config;
