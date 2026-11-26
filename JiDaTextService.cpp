@@ -296,12 +296,19 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
   // 5. Shift
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   if (shift) {
+    // 英文模式 + 全角 + Shift+字母：吞掉按键，让 OnKeyDown 走全角大写输出
+    if (!_status.chinese && _status.fullShape && wParam >= 'A' &&
+        wParam <= 'Z') {
+      *pfEaten = TRUE;
+      return S_OK;
+    }
+
     // Shift + 字母
     if (wParam >= 'A' && wParam <= 'Z') {
       if (g_config.shiftDirectCommit)
         return S_OK;  // 开关打开 → 宿主输出大写
       if (!_status.chinese) {
-        // 英文模式，宿主输出大写
+        // 英文模式（半角），宿主输出大写
         return S_OK;
       }
     }
