@@ -17,8 +17,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD r, LPVOID) {
     if (slash != std::wstring::npos)
       dir = dir.substr(0, slash + 1);
 
-    SetJiDaTablePath(dir + L"data\\jidian_wubi86.txt");
-    // 不在 DllMain 里同步加载：由 Activate 调 LoadJiDaTableAsync()
+    SetJiDaTablePath(dir + L"data\\86海峰词库\\freeime.mb");
   }
   return TRUE;
 }

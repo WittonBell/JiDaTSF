@@ -5,7 +5,8 @@
 #include <cstring>
 #include <cwchar>
 #include <cwctype>
-#include <thread>
+#include <iterator>
+#include <mutex>
 #include "Config.h"
 
 HINSTANCE g_hInstance = nullptr;
@@ -34,281 +35,107 @@ JiDaConfig g_config;
 // ---------- 词库加载状态 ----------
 static std::wstring s_tablePath;
 static std::atomic<bool> s_tableLoaded{false};
-static std::atomic<bool> s_tableLoading{false};
-static constexpr uint32_t kDictionaryCacheVersion = 1;
+static std::mutex s_tableLoadMutex;
+static constexpr size_t kMbPhraseOffset = 0x1B620;
 
-static bool ReadCacheValue(FILE* fp, void* value, size_t size) {
-  return fread(value, 1, size, fp) == size;
-}
-
-static bool GetFileMetadata(const std::wstring& path,
-                            uint64_t& size,
-                            uint64_t& lastWrite) {
-  WIN32_FILE_ATTRIBUTE_DATA data;
-  if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data))
-    return false;
-  size = (static_cast<uint64_t>(data.nFileSizeHigh) << 32) |
-         data.nFileSizeLow;
-  lastWrite = (static_cast<uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) |
-              data.ftLastWriteTime.dwLowDateTime;
-  return true;
-}
-
-static void BuildTrie();
-
-static void BuildCharacterFullCode() {
-  g_charFullCode.clear();
-  for (auto& e : g_entries) {
-    if (e.word.size() != 1)
-      continue;
-    auto it = g_charFullCode.find(e.word);
-    if (it == g_charFullCode.end() || e.code.size() > it->second.size() ||
-        (e.code.size() == it->second.size() && e.code < it->second))
-      g_charFullCode[e.word] = e.code;
-  }
-}
-
-static bool LoadJiDaTableCacheFile(const std::wstring& path) {
-  uint64_t sourceSize = 0, sourceLastWrite = 0;
-  if (!GetFileMetadata(path, sourceSize, sourceLastWrite))
-    return false;
-
+static bool ReadMbDictionary(const std::wstring& path,
+                             std::vector<WubiEntry>& entries) {
   FILE* fp = nullptr;
-  if (_wfopen_s(&fp, (path + L".jdc").c_str(), L"rb") != 0 || !fp)
+  if (_wfopen_s(&fp, path.c_str(), L"rb") != 0 || !fp) {
+    OutputDebugStringW(L"[JiDa] MB dictionary: cannot open file\n");
     return false;
+  }
 
-  char magic[4] = {};
-  uint32_t version = 0, entryCount = 0;
-  uint64_t cachedSize = 0, cachedLastWrite = 0;
-  uint16_t wildcardChar = 0;
-  bool valid = ReadCacheValue(fp, magic, sizeof(magic)) &&
-               ReadCacheValue(fp, &version, sizeof(version)) &&
-               ReadCacheValue(fp, &cachedSize, sizeof(cachedSize)) &&
-               ReadCacheValue(fp, &cachedLastWrite, sizeof(cachedLastWrite)) &&
-               ReadCacheValue(fp, &wildcardChar, sizeof(wildcardChar)) &&
-               ReadCacheValue(fp, &entryCount, sizeof(entryCount));
-  if (!valid || memcmp(magic, "JDTC", sizeof(magic)) != 0 ||
-      version != kDictionaryCacheVersion || cachedSize != sourceSize ||
-      cachedLastWrite != sourceLastWrite || wildcardChar < L'a' ||
-      wildcardChar > L'z' || entryCount > 2000000) {
+  if (fseek(fp, 0, SEEK_END) != 0) {
     fclose(fp);
     return false;
   }
-
-  std::vector<WubiEntry> entries;
-  entries.reserve(entryCount);
-  for (uint32_t i = 0; i < entryCount; ++i) {
-    uint32_t codeLength = 0, wordLength = 0;
-    if (!ReadCacheValue(fp, &codeLength, sizeof(codeLength)) ||
-        !ReadCacheValue(fp, &wordLength, sizeof(wordLength)) ||
-        codeLength == 0 || codeLength > 4 || wordLength == 0 ||
-        wordLength > 8192) {
-      valid = false;
-      break;
-    }
-
-    WubiEntry entry;
-    entry.code.resize(codeLength);
-    entry.word.resize(wordLength);
-    if (!ReadCacheValue(fp, entry.code.data(),
-                        codeLength * sizeof(wchar_t)) ||
-        !ReadCacheValue(fp, entry.word.data(),
-                        wordLength * sizeof(wchar_t))) {
-      valid = false;
-      break;
-    }
-    entry.level = static_cast<int>(codeLength) - 1;
-    entries.push_back(std::move(entry));
+  long fileSize = ftell(fp);
+  if (fileSize < 0 || fseek(fp, 0, SEEK_SET) != 0) {
+    fclose(fp);
+    return false;
   }
-  if (valid && fgetc(fp) != EOF)
-    valid = false;
+  std::vector<unsigned char> data(static_cast<size_t>(fileSize));
+  bool readOk =
+      !data.empty() && fread(data.data(), 1, data.size(), fp) == data.size();
   fclose(fp);
-  if (!valid || entries.empty())
+  if (!readOk || data.size() < kMbPhraseOffset + 3 ||
+      memcmp(data.data(), "Freeime Dictionary", 18) != 0) {
+    OutputDebugStringW(L"[JiDa] MB dictionary: invalid header or file size\n");
     return false;
-
-  g_config.wildcardChar = static_cast<wchar_t>(wildcardChar);
-  g_entries = std::move(entries);
-  BuildTrie();
-  BuildCharacterFullCode();
-  return true;
-}
-
-void SetJiDaTablePath(const std::wstring& path) {
-  s_tablePath = path;
-}
-bool IsJiDaTableLoaded() {
-  return s_tableLoaded.load();
-}
-bool IsJiDaTableLoading() {
-  return s_tableLoading.load();
-}
-
-bool LoadJiDaTableCache() {
-  if (s_tableLoaded.load())
-    return true;
-  bool expected = false;
-  if (!s_tableLoading.compare_exchange_strong(expected, true))
-    return false;
-
-  bool ok = LoadJiDaTableCacheFile(s_tablePath);
-  if (ok) {
-    s_tableLoaded = true;
-    OutputDebugStringW(L"[JiDa] Dictionary cache loaded synchronously\n");
   }
-  s_tableLoading = false;
-  return ok;
-}
 
-void LoadJiDaTableAsync() {
-  if (s_tableLoaded.load())
-    return;
-  bool expected = false;
-  if (!s_tableLoading.compare_exchange_strong(expected, true))
-    return;
-
-  std::wstring path = s_tablePath;
-  std::thread([path]() {
-    bool ok = LoadJiDaTable(path);
-    if (ok) {
-      s_tableLoaded = true;
-      OutputDebugStringW(L"[JiDa] Table loaded OK\n");
-    } else {
-      OutputDebugStringW(
-          L"[JiDa] Table load FAILED, will retry on next Activate\n");
-    }
-    s_tableLoading = false;
-  }).detach();
-}
-
-// ---------- 解析 ----------
-static void StripEntryPrefix(std::wstring& s) {
-  while (!s.empty()) {
-    wchar_t c = s[0];
-    if (c == L'~' || c == L'^' || c == L'!')
-      s.erase(0, 1);
-    else
+  size_t position = kMbPhraseOffset;
+  while (position < data.size()) {
+    if (data.size() - position < 3)
       break;
-  }
-}
-static void SplitTokens(const std::wstring& s, std::vector<std::wstring>& out) {
-  out.clear();
-  std::wstring cur;
-  for (wchar_t c : s) {
-    if (c == L' ' || c == L'\t') {
-      if (!cur.empty()) {
-        out.push_back(cur);
-        cur.clear();
+
+    uint8_t codeLength = data[position];
+    if (codeLength == 0xFF) {
+      if (data.size() - position < 2)
+        break;
+      // The binary table interleaves two-byte index markers with records.
+      position += 2;
+      continue;
+    }
+    if (codeLength == 0)
+      break;
+
+    uint8_t wordByteLength = data[position + 1];
+    uint8_t flags = data[position + 2];
+    size_t recordSize = 3 + static_cast<size_t>(codeLength) + wordByteLength;
+    if (wordByteLength == 0 || (wordByteLength & 1) != 0 ||
+        recordSize > data.size() - position) {
+      OutputDebugStringW(L"[JiDa] MB dictionary: malformed phrase record\n");
+      return false;
+    }
+
+    const unsigned char* codeBytes = data.data() + position + 3;
+    bool validWubiCode = codeLength <= 4;
+    std::wstring code;
+    if (validWubiCode) {
+      code.reserve(codeLength);
+      for (uint8_t i = 0; i < codeLength; ++i) {
+        unsigned char ch = codeBytes[i];
+        if (ch >= 'A' && ch <= 'Z')
+          ch = static_cast<unsigned char>(ch - 'A' + 'a');
+        if (ch < 'a' || ch > 'z') {
+          validWubiCode = false;
+          break;
+        }
+        code.push_back(static_cast<wchar_t>(ch));
       }
-    } else
-      cur += c;
-  }
-  if (!cur.empty())
-    out.push_back(cur);
-}
-
-static void ParseJiDaFormat(FILE* fp, std::vector<WubiEntry>& entries) {
-  wchar_t line[8192];
-  bool inText = false, inDesc = false;
-  while (fgetws(line, 8192, fp)) {
-    std::wstring s = line;
-    if (!s.empty() && s[0] == 0xFEFF)
-      s.erase(0, 1);
-    while (!s.empty() && (s.back() == L'\r' || s.back() == L'\n' ||
-                          s.back() == L' ' || s.back() == L'\t'))
-      s.pop_back();
-    if (s.empty())
-      continue;
-    if (s.rfind(L"------", 0) == 0)
-      continue;
-    if (s.rfind(L"★★★", 0) == 0)
-      continue;
-
-    if (s == L"[Description]") {
-      inDesc = true;
-      inText = false;
-      continue;
-    }
-    if (s == L"[rule]") {
-      inDesc = false;
-      inText = false;
-      continue;
-    }
-    if (s == L"[Text]") {
-      inDesc = false;
-      inText = true;
-      continue;
-    }
-    if (!s.empty() && s[0] == L'[') {
-      inDesc = false;
-      inText = false;
-      continue;
     }
 
-    if (inDesc) {
-      if (s.rfind(L"WildChar=", 0) == 0 && s.size() > 9) {
-        wchar_t wc = towlower(s[9]);
-        if (wc >= L'a' && wc <= L'z')
-          g_config.wildcardChar = wc;
+    if (validWubiCode) {
+      std::wstring word;
+      word.reserve(wordByteLength / 2);
+      const unsigned char* wordBytes = codeBytes + codeLength;
+      for (uint8_t i = 0; i < wordByteLength; i += 2) {
+        uint16_t ch = static_cast<uint16_t>(wordBytes[i]) |
+                      (static_cast<uint16_t>(wordBytes[i + 1]) << 8);
+        word.push_back(static_cast<wchar_t>(ch));
       }
-      continue;
+
+      if (flags == 0x32) {
+        // Variant records store a simplified/traditional pair as "A(B)".
+        size_t variantStart = word.find(L'(');
+        if (variantStart != std::wstring::npos)
+          word.resize(variantStart);
+      }
+      if (!word.empty()) {
+        entries.push_back(
+            WubiEntry{std::move(code), std::move(word), codeLength - 1});
+      }
     }
-    if (!inText)
-      continue;
-
-    std::vector<std::wstring> tokens;
-    SplitTokens(s, tokens);
-    if (tokens.size() < 2)
-      continue;
-
-    std::wstring code = tokens[0];
-    StripEntryPrefix(code);
-    if (code.empty())
-      continue;
-    for (auto& ch : code)
-      ch = towlower(ch);
-    if (code.find_first_not_of(L"abcdefghijklmnopqrstuvwxyz") !=
-        std::wstring::npos)
-      continue;
-    if (code.size() > 4)
-      continue;
-
-    for (size_t i = 1; i < tokens.size(); ++i) {
-      std::wstring word = tokens[i];
-      StripEntryPrefix(word);
-      if (word.empty())
-        continue;
-      entries.push_back(WubiEntry{code, word, (int)code.size() - 1});
-    }
+    position += recordSize;
   }
-}
-
-static void ParseSimpleFormat(FILE* fp, std::vector<WubiEntry>& entries) {
-  wchar_t line[4096];
-  while (fgetws(line, 4096, fp)) {
-    std::wstring s = line;
-    if (!s.empty() && s[0] == 0xFEFF)
-      s.erase(0, 1);
-    while (!s.empty() &&
-           (s.back() == L'\r' || s.back() == L'\n' || s.back() == L' '))
-      s.pop_back();
-    if (s.empty() || s[0] == L'#')
-      continue;
-    auto tab = s.find(L'\t');
-    if (tab == std::wstring::npos)
-      continue;
-    std::wstring code = s.substr(0, tab);
-    std::wstring word = s.substr(tab + 1);
-    if (word.empty() || code.size() > 4)
-      continue;
-    for (auto& ch : code)
-      ch = towlower(ch);
-    entries.push_back(WubiEntry{code, word, (int)code.size() - 1});
-  }
+  return true;
 }
 
 static void BuildTrie() {
   g_trie.clear();
-  g_trie.reserve(g_entries.size() + 1);
+  g_trie.reserve(g_entries.size() * 2 + 1);
   g_trie.emplace_back();
   g_trieRoot = 0;
 
@@ -332,36 +159,79 @@ static void BuildTrie() {
   }
 }
 
-bool LoadJiDaTable(const std::wstring& path) {
-  FILE* fp = nullptr;
-  if (_wfopen_s(&fp, path.c_str(), L"r, ccs=UTF-8") != 0 || !fp) {
-    OutputDebugStringW(L"[JiDa] LoadJiDaTable: cannot open file\n");
-    return false;
+static void BuildCharacterFullCode() {
+  g_charFullCode.clear();
+  for (auto& entry : g_entries) {
+    if (entry.word.size() != 1)
+      continue;
+    auto it = g_charFullCode.find(entry.word);
+    if (it == g_charFullCode.end() || entry.code.size() > it->second.size())
+      g_charFullCode[entry.word] = entry.code;
   }
-  bool isJiDa = false;
-  {
-    wchar_t line[4096];
-    while (fgetws(line, 4096, fp))
-      if (wcsstr(line, L"[Text]")) {
-        isJiDa = true;
-        break;
-      }
-  }
-  rewind(fp);
+}
+
+void SetJiDaTablePath(const std::wstring& path) {
+  s_tablePath = path;
+}
+
+bool IsJiDaTableLoaded() {
+  return s_tableLoaded.load();
+}
+
+bool LoadJiDaTable() {
+  std::lock_guard<std::mutex> lock(s_tableLoadMutex);
+  if (s_tableLoaded.load())
+    return true;
 
   std::vector<WubiEntry> entries;
-  entries.reserve(150000);
-  if (isJiDa)
-    ParseJiDaFormat(fp, entries);
-  else
-    ParseSimpleFormat(fp, entries);
-  fclose(fp);
+  if (!ReadMbDictionary(s_tablePath, entries)) {
+    OutputDebugStringW(L"[JiDa] Failed to load primary MB dictionary\n");
+    return false;
+  }
+  if (entries.empty()) {
+    OutputDebugStringW(
+        L"[JiDa] Primary MB dictionary contains no supported Wubi entries\n");
+    return false;
+  }
 
+  std::wstring attachPath = s_tablePath;
+  size_t separator = attachPath.find_last_of(L"\\/");
+  if (separator != std::wstring::npos)
+    attachPath.resize(separator + 1);
+  else
+    attachPath.clear();
+  attachPath += L"attach.mb";
+
+  DWORD attachAttributes = GetFileAttributesW(attachPath.c_str());
+  if (attachAttributes != INVALID_FILE_ATTRIBUTES &&
+      !(attachAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    std::vector<WubiEntry> attachEntries;
+    if (ReadMbDictionary(attachPath, attachEntries)) {
+      entries.insert(entries.end(),
+                     std::make_move_iterator(attachEntries.begin()),
+                     std::make_move_iterator(attachEntries.end()));
+    } else {
+      OutputDebugStringW(L"[JiDa] Optional attach.mb could not be loaded\n");
+    }
+  }
+
+  std::stable_sort(entries.begin(), entries.end(),
+                   [](const WubiEntry& a, const WubiEntry& b) {
+                     if (a.code.size() != b.code.size())
+                       return a.code.size() < b.code.size();
+                     return a.code < b.code;
+                   });
   g_entries = std::move(entries);
   BuildTrie();
   BuildCharacterFullCode();
 
-  return !g_entries.empty();
+  bool loaded = !g_entries.empty();
+  s_tableLoaded = loaded;
+  wchar_t message[128];
+  swprintf_s(message, L"[JiDa] MB dictionary loaded: %zu entries\n",
+             g_entries.size());
+  OutputDebugStringW(message);
+  return loaded;
 }
 
 // ---------- 用户词 ----------

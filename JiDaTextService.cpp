@@ -119,8 +119,8 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     OutputDebugStringW(L"[JiDa] Activate: QI ITfKeystrokeMgr FAILED\n");
   }
 
-  if (!LoadJiDaTableCache())
-    LoadJiDaTableAsync();
+  if (!LoadJiDaTable())
+    OutputDebugStringW(L"[JiDa] Activate: MB dictionary unavailable\n");
 
   // ---------------- 2. 线程事件 sink（必须走 ITfSource） ----------------
   ITfSource* source = nullptr;
@@ -152,13 +152,6 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     _CommitAndEnd(_activeCtx, text);
     _engine.Reset();
     _HideCandidates();
-  };
-
-  _candWnd->OnTableLoaded = [this]() {
-    if (!_activeCtx || _engine.Buffer().empty())
-      return;
-    _engine.RefreshCandidates();
-    _ShowCandidates(_activeCtx);
   };
 
   _candWnd->OnContextMenu = [this](POINT pt) { _ShowStatusContextMenu(pt); };
@@ -578,8 +571,6 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     if (act != EngineAction::None)
       *pfEaten = TRUE;
     _HandleLetterResult(pic, act, committed, newBuffer);
-    if (!_engine.Buffer().empty() && !IsJiDaTableLoaded() && _candWnd)
-      _candWnd->WatchForTableLoad();
     return S_OK;
   }
 

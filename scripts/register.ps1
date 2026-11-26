@@ -140,20 +140,13 @@ if (-not $SkipDataCopy) {
     $dstData = Join-Path (Split-Path $dllPath) 'data'
     if (Test-Path $srcData) {
         New-Item -ItemType Directory $dstData -Force | Out-Null
-        Get-ChildItem $srcData -File | ForEach-Object {
-            Copy-Item $_.FullName $dstData -Force
-            Write-Host ("  + data\{0}" -f $_.Name) -ForegroundColor DarkGray
-        }
-        $dictionaryPath = Join-Path $dstData 'jidian_wubi86.txt'
-        $cacheGenerator = Join-Path $PSScriptRoot 'build-JidaDictionaryCache.ps1'
-        if ((Test-Path -LiteralPath $dictionaryPath) -and
-            (Test-Path -LiteralPath $cacheGenerator)) {
-            try {
-                & $cacheGenerator -InputPath $dictionaryPath `
-                    -OutputPath ($dictionaryPath + '.jdc')
-            } catch {
-                Write-Warning "词库缓存生成失败，将回退到文本词库加载: $_"
-            }
+        Get-ChildItem $srcData -Recurse -File | ForEach-Object {
+            $relativePath = $_.FullName.Substring($srcData.Length).TrimStart([char[]]@('\', '/'))
+            $targetPath = Join-Path $dstData $relativePath
+            $targetDir = Split-Path -Parent $targetPath
+            New-Item -ItemType Directory $targetDir -Force | Out-Null
+            Copy-Item $_.FullName $targetPath -Force
+            Write-Host ("  + data\{0}" -f $relativePath) -ForegroundColor DarkGray
         }
     } else {
         Write-Warning "未找到 $srcData，跳过码表复制。"

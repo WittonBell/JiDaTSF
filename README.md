@@ -54,8 +54,7 @@ powershell -ExecutionPolicy Bypass -File scripts\register.ps1
 `register.ps1` 会：
 
 1. 调用 `regsvr32 /s` 注册 DLL
-2. 把 `data\jidian_wubi86.txt` 复制到 DLL 同目录的 `data\` 下
-3. 生成供启动时快速加载的 `jidian_wubi86.txt.jdc` 缓存
+2. 递归复制 `data\` 下的词库文件，其中包括 `86海峰词库\freeime.mb` 和可选的 `attach.mb`
 
 注册完成后：
 
@@ -74,20 +73,21 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister.ps1
 
 ## 三、码表
 
-### 路径
+### 运行时词库
 
 ```
-JiDaTSF/bin/x64/Release/data/jidian_wubi86.txt
+JiDaTSF/bin/x64/Release/data/86海峰词库/freeime.mb
 ```
 
-码表必须放在与 `JiDaTSF.dll` 同目录的 `data\` 子目录下。`DllMain` 在加载 DLL 时按 DLL 所在路径查找。
-安装脚本会根据码表生成启动缓存；更新词库后重新运行安装脚本即可刷新缓存。缓存不可用或与源词库版本不符时，输入法会回退到异步文本加载。
+输入法在激活时直接读取极点 `.mb` 二进制词库，不再运行时解析文本词库。将主词库放在上述路径；同目录下的 `attach.mb` 存在时也会一并读取。更新词库后重新运行安装脚本以复制新文件。
 
 ### 完整极点词库
 
-1. 打开极点五笔 → 管理工具 → 词库工具 → 词库生成与维护 → 导出
-2. 覆盖 `data\jidian_wubi86.txt`
-3. 重启输入法（或重新登录）
+1. 从极点五笔或兼容词库工具导出 `.mb` 主词库
+2. 将其保存为 `data\86海峰词库\freeime.mb`；需要附加词库时同时放入 `attach.mb`
+3. 重新运行安装脚本并重启输入法
+
+文本导出文件可用于编辑或迁移，但不会被输入法作为运行时词库加载。
 
 ---
 

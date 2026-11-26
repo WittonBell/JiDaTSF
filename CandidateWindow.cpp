@@ -5,7 +5,6 @@
 #include "Globals.h"
 
 static const wchar_t* kCandClass = L"JiDaCandWnd";
-static constexpr UINT_PTR kTableLoadTimer = 4;
 
 static bool IsVertical() {
   return g_config.candLayout == CandLayout::Vertical;
@@ -40,22 +39,15 @@ void CCandidateWindow::Destroy() {
   }
   if (_hwnd) {
     KillTimer(_hwnd, 3);
-    KillTimer(_hwnd, kTableLoadTimer);
     DestroyWindow(_hwnd);
     _hwnd = nullptr;
   }
-}
-
-void CCandidateWindow::WatchForTableLoad() {
-  if (_hwnd && !SetTimer(_hwnd, kTableLoadTimer, 100, nullptr))
-    OutputDebugStringW(L"[JiDa] Candidate: failed to start table-load timer\n");
 }
 
 void CCandidateWindow::Hide() {
   if (!_hwnd)
     return;
   KillTimer(_hwnd, 3);
-  KillTimer(_hwnd, kTableLoadTimer);
   ShowWindow(_hwnd, SW_HIDE);
 }
 
@@ -337,16 +329,6 @@ LRESULT CALLBACK CCandidateWindow::_WndProc(HWND h,
       return 0;
     }
     case WM_TIMER:
-      if (w == kTableLoadTimer) {
-        if (IsJiDaTableLoaded()) {
-          KillTimer(h, kTableLoadTimer);
-          if (self->OnTableLoaded)
-            self->OnTableLoaded();
-        } else if (!IsJiDaTableLoading()) {
-          KillTimer(h, kTableLoadTimer);
-        }
-        return 0;
-      }
       if (w == 3 && self->_textMode) {
         self->_textCursorVisible = !self->_textCursorVisible;
         InvalidateRect(h, nullptr, FALSE);

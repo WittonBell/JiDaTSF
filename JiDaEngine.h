@@ -39,7 +39,6 @@ class JiDaEngine {
   int PageStart() const { return pageStart_; }
   bool IsFourCodeComplete() const;
   bool IsWaitingDateOrAmount() const { return waitDateOrAmount_; }
-  void RefreshCandidates() { Query(buffer_); }
   void SetStatus(InputStatus status) { _inputStatus = status; }
 
  private:
