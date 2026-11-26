@@ -1,6 +1,7 @@
 #include "StatusWindow.h"
 #include "Globals.h"
 
+#include <commctrl.h>
 #include <strsafe.h>
 #include <windowsx.h>
 #include <utility>
@@ -9,6 +10,7 @@ const wchar_t* CStatusWindow::WindowClassName = L"TSF.CustomInputStatusWindow";
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "comctl32.lib")
 
 namespace {
 constexpr COLORREF kWindowBg = RGB(245, 246, 248);
@@ -84,6 +86,21 @@ bool CStatusWindow::Create(HINSTANCE instance,
   }
 
   _created = true;
+
+  // ---- 创建 tooltip 窗口 ----
+  _tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+                             WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+                             CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                             CW_USEDEFAULT, _hwnd, nullptr, _instance, nullptr);
+  if (_tooltip) {
+    SetWindowPos(_tooltip, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SendMessageW(_tooltip, TTM_SETMAXTIPWIDTH, 0, 400);
+    SendMessageW(_tooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 300);
+    SendMessageW(_tooltip, TTM_SETDELAYTIME, TTDT_RESHOW, 100);
+    SendMessageW(_tooltip, TTM_SETDELAYTIME, TTDT_AUTOPOP, 15000);
+  }
+
   RebuildLayout();
 
   // 2) 取真实尺寸
@@ -147,6 +164,11 @@ bool CStatusWindow::Create(HINSTANCE instance,
 }
 
 void CStatusWindow::Destroy() {
+  if (_tooltip) {
+    DestroyWindow(_tooltip);
+    _tooltip = nullptr;
+  }
+
   if (_hwnd) {
     HWND hwnd = _hwnd;
     _hwnd = nullptr;
@@ -292,6 +314,8 @@ void CStatusWindow::RebuildLayout() {
     SetWindowPos(_hwnd, nullptr, 0, 0, width, height,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
   }
+
+  _RebuildTooltips();
 }
 
 void CStatusWindow::Paint() {
@@ -472,6 +496,12 @@ LRESULT CStatusWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
         _hotButton = hit;
         InvalidateRect(_hwnd, nullptr, FALSE);
       }
+
+      // 转发给 tooltip，由系统处理命中、延时、显示
+      if (_tooltip) {
+        MSG msg{_hwnd, WM_MOUSEMOVE, wParam, lParam};
+        SendMessageW(_tooltip, TTM_RELAYEVENT, 0, (LPARAM)&msg);
+      }
       return 0;
     }
 
@@ -480,6 +510,8 @@ LRESULT CStatusWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
       if (_pressedButton < 0)
         _hotButton = -1;
       InvalidateRect(_hwnd, nullptr, FALSE);
+      if (_tooltip)
+        SendMessageW(_tooltip, TTM_POP, 0, 0);
       return 0;
 
     case WM_LBUTTONDOWN: {
@@ -572,8 +604,92 @@ LRESULT CStatusWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
       _hwnd = nullptr;
       return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
+    case WM_NOTIFY: {
+      LPNMHDR hdr = reinterpret_cast<LPNMHDR>(lParam);
+      if (hdr && hdr->hwndFrom == _tooltip && hdr->code == TTN_SHOW) {
+        RECT rcStatus;
+        GetWindowRect(_hwnd, &rcStatus);
+        RECT rcTip;
+        GetWindowRect(_tooltip, &rcTip);
 
+        int tipW = rcTip.right - rcTip.left;
+        int tipH = rcTip.bottom - rcTip.top;
+
+        // 水平居中于状态栏
+        int x = rcStatus.left + ((rcStatus.right - rcStatus.left) - tipW) / 2;
+        // 默认放状态栏上方，间隔 6px
+        int y = rcStatus.top - tipH - 6;
+
+        // 约束在所在显示器 work area 内
+        HMONITOR hmon = MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = {sizeof(mi)};
+        GetMonitorInfo(hmon, &mi);
+
+        if (y < mi.rcWork.top) {
+          // 上方放不下，翻到状态栏下方
+          y = rcStatus.bottom + 6;
+        }
+        if (x < mi.rcWork.left)
+          x = mi.rcWork.left;
+        if (x + tipW > mi.rcWork.right)
+          x = mi.rcWork.right - tipW;
+
+        SetWindowPos(_tooltip, HWND_TOPMOST, x, y, 0, 0,
+                     SWP_NOSIZE | SWP_NOACTIVATE);
+        return TRUE;  // 阻止标准 tooltip 的默认定位
+      }
+      break;
+    }
     default:
-      return DefWindowProcW(_hwnd, msg, wParam, lParam);
+      break;
+  }
+  return DefWindowProcW(_hwnd, msg, wParam, lParam);
+}
+
+std::wstring CStatusWindow::_TooltipText(int index) const {
+  if (index < 0 || index >= _buttonCount)
+    return L"";
+  switch (_buttons[index].command) {
+    case StatusCommand::ToggleChinese:
+      return _status.chinese ? L"中文输入（点击或按右 Shift 切换到英文）"
+                             : L"英文输入（点击或按右 Shift 切换到中文）";
+    case StatusCommand::ToggleFullShape:
+      return _status.fullShape ? L"全角（点击或按 Shift+空格 切换到半角）"
+                               : L"半角（点击或按 Shift+空格 切换到全角）";
+    case StatusCommand::TogglePunctuation:
+      return _status.chinesePunctuation
+                 ? L"中文标点（点击或按 Ctrl+. 切换到英文标点）"
+                 : L"英文标点（点击或按 Ctrl+. 切换到中文标点）";
+    case StatusCommand::ToggleTraditional:
+      return _status.traditional ? L"繁体输出（点击切换到简体）"
+                                 : L"简体输出（点击切换到繁体）";
+    case StatusCommand::OpenSettings:
+      return L"设置...";
+    default:
+      return L"";
+  }
+}
+
+void CStatusWindow::_RebuildTooltips() {
+  if (!_tooltip || !_hwnd)
+    return;
+
+  for (int i = 0; i < _buttonCount; ++i) {
+    TOOLINFOW ti = {sizeof(ti)};
+    ti.hwnd = _hwnd;
+    ti.uId = (UINT_PTR)(i + 1);  // uId 从 1 开始，0 保留
+    ti.rect = _buttons[i].rect;
+    ti.uFlags = TTF_SUBCLASS | TTF_TRANSPARENT;
+
+    std::wstring text = _TooltipText(i);
+    ti.lpszText = const_cast<LPWSTR>(text.c_str());
+
+    // 先尝试更新已存在的 tool
+    if (!SendMessageW(_tooltip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti)) {
+      // 不存在则新增
+      SendMessageW(_tooltip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+    }
+    // 同步区域（布局变化时按钮位置会变）
+    SendMessageW(_tooltip, TTM_NEWTOOLRECTW, 0, (LPARAM)&ti);
   }
 }

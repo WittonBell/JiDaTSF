@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <functional>
+#include <string>
 
 enum class StatusCommand {
   ToggleChinese,      // 中文 / 英文
@@ -95,4 +96,8 @@ class CStatusWindow final {
   int _pressedButton = -1;
   bool _trackingMouse = false;
   bool _created = false;
+
+  HWND _tooltip = nullptr;
+  void _RebuildTooltips();
+  std::wstring _TooltipText(int index) const;
 };
