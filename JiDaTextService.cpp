@@ -644,7 +644,7 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
 
   // 退格
   if (wParam == VK_BACK) {
-    if (!_engine.Buffer().empty() && !_engine.Candidates().empty()) {
+    if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
       *pfEaten = TRUE;
       _engine.OnBackspace();
       if (_engine.Buffer().empty()) {
@@ -654,13 +654,8 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
         _SyncComposition(pic);
         _ShowCandidates(pic);
       }
-    } else if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
-      // 无候选但有编码：一次性清空编码，不吞键让宿主删除文档字
-      *pfEaten = FALSE;
-      _CancelWithContext(pic);
-      _HideCandidates();
     }
-    // buffer 为空：pfEaten 保持 FALSE，宿主正常处理退格
+    // buffer 为空：pfEaten 保持 FALSE，宿主正常处理退格（删除文档字）
     return S_OK;
   }
 
