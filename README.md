@@ -32,7 +32,7 @@
 | 鼠标选词 | 候选窗口点击 / 滚轮翻页 |
 | Shift + 字母 | 直接输出大写英文字母，走系统输入 |
 | 逐键提示 | 前缀扩展，短码优先 |
-| GBK 生僻字 | 设置中关闭后过滤码表中标记为 `~` 的生僻字词 |
+| 汉字库版本 | 可选 GB2312、GBK、GB18030-2000、GB18030-2005 |
 
 ### 显示
 
@@ -137,13 +137,21 @@ JiDaTSF/bin/x64/Release/data/jidian_wubi86.txt
 配置位于 `Globals.h` 中的 `JiDaConfig` 结构体：
 
 ```cpp
+enum class CharacterSetVersion : int {
+  GB2312 = 0,
+  GBK = 1,
+  GB18030_2000 = 2,
+  GB18030_2005 = 3
+};
+
 struct JiDaConfig {
   bool zRepeat = true;                             // Z 重复上次上屏
   bool zWildcard = true;                           // Z 通配
   bool semicolonSecond = true;                     // 分号选第二重码
   bool punctuationTop = true;                      // 标点顶屏
   bool perKeyHint = true;                          // 逐键提示
-  bool gbkExt = true;                              // GBK 生僻字
+  CharacterSetVersion characterSetVersion =
+      CharacterSetVersion::GBK;                     // 汉字库版本
   wchar_t wildcardChar = L'z';                     // 通配符字符
   bool inlinePreedit = false;                      // 嵌入预编辑
   bool showStatusBar = true;                       // 是否显示状态栏
@@ -153,7 +161,9 @@ struct JiDaConfig {
 };
 ```
 
-可通过输入法设置窗口管理配置，左侧按输入选项、候选列表、外观和状态栏分类，右侧编辑对应内容。点击“确定”后保存到 `%APPDATA%\JiDaTSF\config.ini`；“取消”不会应用未保存的修改，“恢复默认”会将当前编辑内容重置为默认值。
+可通过输入法设置窗口的“字库版本”分类选择字符集标准。当前只加载现有极点 GBK 词库：GB2312 会过滤码表中以 `~` 标记的扩展字词，GBK 及两个 GB18030 选项暂使用相同词库；以后加入对应版本的词库文件时，再按所选版本组合加载。配置保存到 `%APPDATA%\JiDaTSF\config.ini`；旧版 `GbkExt` 配置会自动迁移。
+
+设置窗口左侧按输入选项、字库版本、候选列表、外观和状态栏分类，右侧编辑对应内容。点击“确定”后保存；“取消”不会应用未保存的修改，“恢复默认”会将当前编辑内容重置为默认值。
 
 ---
 

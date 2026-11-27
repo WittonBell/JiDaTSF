@@ -33,6 +33,20 @@ static int ReadInt(const wchar_t* sec, const wchar_t* key, int def) {
 static bool ReadBool(const wchar_t* sec, const wchar_t* key, bool def) {
   return ReadInt(sec, key, def ? 1 : 0) != 0;
 }
+static CharacterSetVersion ReadCharacterSetVersion(const wchar_t* section) {
+  int version = ReadInt(section, L"CharacterSetVersion", -1);
+  if (version == -1) {
+    bool legacyGbkExt = ReadBool(
+        section, L"GbkExt",
+        g_config.characterSetVersion != CharacterSetVersion::GB2312);
+    version = legacyGbkExt ? static_cast<int>(CharacterSetVersion::GBK)
+                           : static_cast<int>(CharacterSetVersion::GB2312);
+  }
+  if (version < static_cast<int>(CharacterSetVersion::GB2312) ||
+      version > static_cast<int>(CharacterSetVersion::GB18030_2005))
+    return g_config.characterSetVersion;
+  return static_cast<CharacterSetVersion>(version);
+}
 static COLORREF ReadColor(const wchar_t* sec,
                           const wchar_t* key,
                           COLORREF def) {
@@ -75,7 +89,7 @@ void LoadJiDaConfig() {
   g_config.punctuationTop =
       ReadBool(in, L"PunctuationTop", g_config.punctuationTop);
   g_config.perKeyHint = ReadBool(in, L"PerKeyHint", g_config.perKeyHint);
-  g_config.gbkExt = ReadBool(in, L"GbkExt", g_config.gbkExt);
+  g_config.characterSetVersion = ReadCharacterSetVersion(in);
   g_config.inlinePreedit =
       ReadBool(in, L"InlinePreedit", g_config.inlinePreedit);
   g_config.shiftDirectCommit =
@@ -120,7 +134,10 @@ void SaveJiDaConfig() {
   WriteBool(in, L"SemicolonSecond", g_config.semicolonSecond);
   WriteBool(in, L"PunctuationTop", g_config.punctuationTop);
   WriteBool(in, L"PerKeyHint", g_config.perKeyHint);
-  WriteBool(in, L"GbkExt", g_config.gbkExt);
+  WriteInt(in, L"CharacterSetVersion",
+           static_cast<int>(g_config.characterSetVersion));
+  WritePrivateProfileStringW(in, L"GbkExt", nullptr,
+                             GetJiDaConfigPath().c_str());
   WriteBool(in, L"InlinePreedit", g_config.inlinePreedit);
   WriteBool(in, L"ShiftDirectCommit", g_config.shiftDirectCommit);
 

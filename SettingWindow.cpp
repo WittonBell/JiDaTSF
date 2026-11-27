@@ -13,7 +13,8 @@ enum PageId {
   PAGE_INPUT = 1,
   PAGE_CANDIDATES,
   PAGE_APPEARANCE,
-  PAGE_STATUS
+  PAGE_STATUS,
+  PAGE_CHARACTER_SET
 };
 
 enum ControlId {
@@ -22,12 +23,12 @@ enum ControlId {
   ID_SEMI_SECOND,
   ID_PUNCT_TOP,
   ID_PERKEY_HINT,
-  ID_GBK_EXT,
   ID_INLINE_PREEDIT,
   ID_SHIFT_DIRECT,
   ID_RAD_VERTICAL,
   ID_RAD_HORIZONTAL,
   ID_CBO_PAGESIZE,
+  ID_CBO_CHARACTER_SET,
   ID_SHOW_STATUS,
   ID_BTN_RESET,
   ID_BTN_OK,
@@ -53,6 +54,7 @@ constexpr SettingCategory kCategories[] = {
     {L"输入法", -1, 0},
     {L"候选窗口", -1, 0},
     {L"输入选项", 0, PAGE_INPUT},
+    {L"字库版本", 0, PAGE_CHARACTER_SET},
     {L"候选列表", 1, PAGE_CANDIDATES},
     {L"外观", 1, PAGE_APPEARANCE},
     {L"状态栏", -1, PAGE_STATUS},
@@ -64,6 +66,22 @@ void SetCheck(HWND control, bool value) {
 
 bool IsChecked(HWND control) {
   return SendMessageW(control, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+bool IsKnownCharacterSetVersion(int version) {
+  return version >= static_cast<int>(CharacterSetVersion::GB2312) &&
+         version <= static_cast<int>(CharacterSetVersion::GB18030_2005);
+}
+
+void SelectComboData(HWND combo, int value) {
+  int count = (int)SendMessageW(combo, CB_GETCOUNT, 0, 0);
+  for (int i = 0; i < count; ++i) {
+    if ((int)SendMessageW(combo, CB_GETITEMDATA, i, 0) == value) {
+      SendMessageW(combo, CB_SETCURSEL, i, 0);
+      return;
+    }
+  }
+  SendMessageW(combo, CB_SETCURSEL, (WPARAM)-1, 0);
 }
 
 HTREEITEM InsertTreeItem(HWND tree,
@@ -313,11 +331,38 @@ void CSettingWindow::_Layout() {
         _controls.chkPunctTop =
             _MkCheck(L"标点顶字上屏", 24, 214, 240, ID_PUNCT_TOP);
         _controls.chkPerKey = _MkCheck(L"逐键提示", 292, 106, 220, ID_PERKEY_HINT);
-        _controls.chkGbkExt = _MkCheck(L"GBK 生僻字", 292, 142, 220, ID_GBK_EXT);
-        _controls.chkInline = _MkCheck(L"嵌入预编辑", 292, 178, 220, ID_INLINE_PREEDIT);
+        _controls.chkInline = _MkCheck(L"嵌入预编辑", 292, 142, 220, ID_INLINE_PREEDIT);
         _controls.chkShiftDirect =
-            _MkCheck(L"Shift 直接上屏", 292, 214, 240, ID_SHIFT_DIRECT);
+            _MkCheck(L"Shift 直接上屏", 292, 178, 240, ID_SHIFT_DIRECT);
         break;
+
+      case PAGE_CHARACTER_SET: {
+        _MkLabel(L"汉字库版本", 22, 18, 500, 28);
+        _MkLabel(L"选择输入法使用的汉字字符集范围。", 22, 50, 520, 24);
+        _MkLabel(L"字符集标准", 24, 108, 120, 24);
+        _controls.cboCharacterSet =
+            _MkCombo(144, 104, 260, 160, ID_CBO_CHARACTER_SET);
+        const struct {
+          const wchar_t* name;
+          CharacterSetVersion version;
+        } options[] = {
+            {L"GB2312", CharacterSetVersion::GB2312},
+            {L"GBK", CharacterSetVersion::GBK},
+            {L"GB18030-2000", CharacterSetVersion::GB18030_2000},
+            {L"GB18030-2005", CharacterSetVersion::GB18030_2005},
+        };
+        for (const auto& option : options) {
+          LRESULT index = SendMessageW(_controls.cboCharacterSet, CB_ADDSTRING,
+                                       0, (LPARAM)option.name);
+          if (index != CB_ERR && index != CB_ERRSPACE)
+            SendMessageW(_controls.cboCharacterSet, CB_SETITEMDATA, index,
+                         (LPARAM)option.version);
+        }
+        _MkLabel(
+            L"当前词库包含 GBK 扩展字；更高版本暂使用 GBK 词库，后续可添加对应词库文件。",
+            24, 148, 510, 48);
+        break;
+      }
 
       case PAGE_CANDIDATES: {
         _MkLabel(L"候选列表", 22, 18, 500, 28);
@@ -380,12 +425,13 @@ void CSettingWindow::_LoadFromConfig() {
   SetCheck(_controls.chkSemiSecond, _draft.semicolonSecond);
   SetCheck(_controls.chkPunctTop, _draft.punctuationTop);
   SetCheck(_controls.chkPerKey, _draft.perKeyHint);
-  SetCheck(_controls.chkGbkExt, _draft.gbkExt);
   SetCheck(_controls.chkInline, _draft.inlinePreedit);
   SetCheck(_controls.chkShiftDirect, _draft.shiftDirectCommit);
   SetCheck(_controls.chkShowBar, _draft.showStatusBar);
   SetCheck(_controls.radVert, _draft.candLayout == CandLayout::Vertical);
   SetCheck(_controls.radHorz, _draft.candLayout == CandLayout::Horizontal);
+  SelectComboData(_controls.cboCharacterSet,
+                  static_cast<int>(_draft.characterSetVersion));
 
   wchar_t text[8];
   swprintf_s(text, L"%d", _draft.candPageSize);
@@ -406,12 +452,20 @@ void CSettingWindow::_SaveToConfig() {
   _draft.semicolonSecond = IsChecked(_controls.chkSemiSecond);
   _draft.punctuationTop = IsChecked(_controls.chkPunctTop);
   _draft.perKeyHint = IsChecked(_controls.chkPerKey);
-  _draft.gbkExt = IsChecked(_controls.chkGbkExt);
   _draft.inlinePreedit = IsChecked(_controls.chkInline);
   _draft.shiftDirectCommit = IsChecked(_controls.chkShiftDirect);
   _draft.showStatusBar = IsChecked(_controls.chkShowBar);
   _draft.candLayout =
       IsChecked(_controls.radVert) ? CandLayout::Vertical : CandLayout::Horizontal;
+
+  int characterSetIndex =
+      (int)SendMessageW(_controls.cboCharacterSet, CB_GETCURSEL, 0, 0);
+  if (characterSetIndex >= 0) {
+    int version = (int)SendMessageW(_controls.cboCharacterSet, CB_GETITEMDATA,
+                                    characterSetIndex, 0);
+    if (IsKnownCharacterSetVersion(version))
+      _draft.characterSetVersion = static_cast<CharacterSetVersion>(version);
+  }
 
   int pageIndex = (int)SendMessageW(_controls.cboPage, CB_GETCURSEL, 0, 0);
   if (pageIndex >= 0)
@@ -427,12 +481,13 @@ void CSettingWindow::_ResetToDefault() {
   SetCheck(_controls.chkSemiSecond, _draft.semicolonSecond);
   SetCheck(_controls.chkPunctTop, _draft.punctuationTop);
   SetCheck(_controls.chkPerKey, _draft.perKeyHint);
-  SetCheck(_controls.chkGbkExt, _draft.gbkExt);
   SetCheck(_controls.chkInline, _draft.inlinePreedit);
   SetCheck(_controls.chkShiftDirect, _draft.shiftDirectCommit);
   SetCheck(_controls.chkShowBar, _draft.showStatusBar);
   SetCheck(_controls.radVert, _draft.candLayout == CandLayout::Vertical);
   SetCheck(_controls.radHorz, _draft.candLayout == CandLayout::Horizontal);
+  SelectComboData(_controls.cboCharacterSet,
+                  static_cast<int>(_draft.characterSetVersion));
 
   wchar_t text[8];
   swprintf_s(text, L"%d", _draft.candPageSize);

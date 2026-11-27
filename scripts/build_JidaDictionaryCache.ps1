@@ -85,13 +85,13 @@ foreach ($originalLine in $lines) {
         }
         for ($i = 1; $i -lt $tokens.Count; $i++) {
             $token = $tokens[$i].Value
-            $isGbkExt = $token.StartsWith('~')
+            $requiredCharacterSet = if ($token.StartsWith('~')) { 1 } else { 0 }
             $word = Remove-EntryPrefix $token
             if ($word.Length -gt 0) {
                 $entries.Add([pscustomobject]@{
                     Code = $code
                     Word = $word
-                    IsGbkExt = $isGbkExt
+                    RequiredCharacterSet = $requiredCharacterSet
                 }) | Out-Null
             }
         }
@@ -112,7 +112,7 @@ foreach ($originalLine in $lines) {
         $entries.Add([pscustomobject]@{
             Code = $code
             Word = $word
-            IsGbkExt = $false
+            RequiredCharacterSet = 0
         }) | Out-Null
     }
 }
@@ -141,11 +141,7 @@ try {
     foreach ($entry in $entries) {
         $writer.Write([uint32]$entry.Code.Length)
         $writer.Write([uint32]$entry.Word.Length)
-        if ($entry.IsGbkExt) {
-            $writer.Write([byte]1)
-        } else {
-            $writer.Write([byte]0)
-        }
+        $writer.Write([byte]$entry.RequiredCharacterSet)
         $writer.Write($encoding.GetBytes($entry.Code))
         $writer.Write($encoding.GetBytes($entry.Word))
     }

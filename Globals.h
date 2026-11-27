@@ -13,11 +13,19 @@ extern HINSTANCE g_hInstance;
 extern const CLSID CLSID_JiDaTSF;
 extern const GUID GUID_JiDa_LBI;
 
+enum class CandLayout { Vertical, Horizontal };
+enum class CharacterSetVersion : int {
+  GB2312 = 0,
+  GBK = 1,
+  GB18030_2000 = 2,
+  GB18030_2005 = 3
+};
+
 struct WubiEntry {
   std::wstring code;
   std::wstring word;
   int level;
-  bool isGbkExt = false;
+  CharacterSetVersion requiredCharacterSet = CharacterSetVersion::GB2312;
 };
 
 struct TrieNode {
@@ -31,15 +39,13 @@ struct UserPhrase {
   std::wstring text;
 };
 
-enum class CandLayout { Vertical, Horizontal };
-
 struct JiDaConfig {
   bool zRepeat = true;
   bool zWildcard = true;
   bool semicolonSecond = true;
   bool punctuationTop = true;
   bool perKeyHint = true;
-  bool gbkExt = true;
+  CharacterSetVersion characterSetVersion = CharacterSetVersion::GBK;
   bool inlinePreedit = false;
   bool showStatusBar = true;
   // Shift 直接上屏

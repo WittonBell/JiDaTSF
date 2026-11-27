@@ -102,10 +102,13 @@ static bool LoadJiDaTableCacheFile(const std::wstring& path) {
   entries.reserve(entryCount);
   for (uint32_t i = 0; i < entryCount; ++i) {
     uint32_t codeLength = 0, wordLength = 0;
-    uint8_t isGbkExt = 0;
+    uint8_t requiredCharacterSet = 0;
     if (!ReadCacheValue(fp, &codeLength, sizeof(codeLength)) ||
         !ReadCacheValue(fp, &wordLength, sizeof(wordLength)) ||
-        !ReadCacheValue(fp, &isGbkExt, sizeof(isGbkExt)) || isGbkExt > 1 ||
+        !ReadCacheValue(fp, &requiredCharacterSet,
+                        sizeof(requiredCharacterSet)) ||
+        requiredCharacterSet >
+            static_cast<uint8_t>(CharacterSetVersion::GB18030_2005) ||
         codeLength == 0 || codeLength > 4 || wordLength == 0 ||
         wordLength > 8192) {
       valid = false;
@@ -123,7 +126,8 @@ static bool LoadJiDaTableCacheFile(const std::wstring& path) {
       break;
     }
     entry.level = static_cast<int>(codeLength) - 1;
-    entry.isGbkExt = isGbkExt != 0;
+    entry.requiredCharacterSet =
+        static_cast<CharacterSetVersion>(requiredCharacterSet);
     entries.push_back(std::move(entry));
   }
   if (valid && fgetc(fp) != EOF)
@@ -280,12 +284,14 @@ static void ParseJiDaFormat(FILE* fp, std::vector<WubiEntry>& entries) {
 
     for (size_t i = 1; i < tokens.size(); ++i) {
       std::wstring word = tokens[i];
-      bool isGbkExt = !word.empty() && word[0] == L'~';
+      CharacterSetVersion requiredCharacterSet =
+          !word.empty() && word[0] == L'~' ? CharacterSetVersion::GBK
+                                           : CharacterSetVersion::GB2312;
       StripEntryPrefix(word);
       if (word.empty())
         continue;
-      entries.push_back(
-          WubiEntry{code, word, (int)code.size() - 1, isGbkExt});
+      entries.push_back(WubiEntry{code, word, (int)code.size() - 1,
+                                  requiredCharacterSet});
     }
   }
 }
@@ -310,7 +316,8 @@ static void ParseSimpleFormat(FILE* fp, std::vector<WubiEntry>& entries) {
       continue;
     for (auto& ch : code)
       ch = towlower(ch);
-    entries.push_back(WubiEntry{code, word, (int)code.size() - 1, false});
+    entries.push_back(WubiEntry{code, word, (int)code.size() - 1,
+                                CharacterSetVersion::GB2312});
   }
 }
 
