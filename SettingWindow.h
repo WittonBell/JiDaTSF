@@ -37,6 +37,10 @@ class CSettingWindow {
   HWND _MkButton(const wchar_t* text, int x, int y, int w, int h, int id);
   HWND _MkColorButton(int x, int y, int w, int h, int id);
   HWND _MkCombo(int x, int y, int w, int h, int id);
+  void _BuildVirtualKeyboard();
+  void _EditVirtualKey(UINT key, int pageId);
+  void _RefreshVirtualKeyboard();
+  void _DrawVirtualKey(const DRAWITEMSTRUCT& draw);
 
   UINT _Dpi() const;
   int _S(int v) const { return MulDiv(v, (int)_Dpi(), 96); }
@@ -47,6 +51,7 @@ class CSettingWindow {
   HWND _controlParent = nullptr;
   HWND _tree = nullptr;
   HFONT _font = nullptr;
+  HFONT _keyboardFont = nullptr;
   ChangeCallback _onChange;
 
   struct Controls {
@@ -62,10 +67,14 @@ class CSettingWindow {
     HWND radHorz = nullptr;
     HWND cboPage = nullptr;
     HWND cboCharacterSet = nullptr;
+    HWND cboChineseToggleShortcut = nullptr;
     HWND btnFont = nullptr;
     HWND btnTextClr = nullptr;
     HWND btnBgClr = nullptr;
     HWND btnSelClr = nullptr;
+    HWND btnKeyLabelClr = nullptr;
+    HWND btnKeyNormalClr = nullptr;
+    HWND btnKeyShiftedClr = nullptr;
     HWND lblFont = nullptr;
   } _controls;
 
@@ -74,5 +83,8 @@ class CSettingWindow {
     HWND window;
   };
   std::vector<Page> _pages;
+  std::vector<HWND> _keyboardButtons;
+  std::vector<HWND> _keyboardColorButtons;
+  int _activePageId = 0;
   JiDaConfig _draft;
 };

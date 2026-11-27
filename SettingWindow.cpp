@@ -14,7 +14,10 @@ enum PageId {
   PAGE_CANDIDATES,
   PAGE_APPEARANCE,
   PAGE_STATUS,
-  PAGE_CHARACTER_SET
+  PAGE_CHARACTER_SET,
+  PAGE_TOGGLE_SHORTCUT,
+  PAGE_SOFT_KEYBOARD,
+  PAGE_CUSTOM_PUNCTUATION
 };
 
 enum ControlId {
@@ -36,11 +39,17 @@ enum ControlId {
   ID_BTN_FONT,
   ID_BTN_TEXTCLR,
   ID_BTN_BGCLR,
-  ID_BTN_SELCLR
+  ID_BTN_SELCLR,
+  ID_BTN_KEY_LABEL_CLR,
+  ID_BTN_KEY_NORMAL_CLR,
+  ID_BTN_KEY_SHIFTED_CLR,
+  ID_VIRTUAL_KEY_BASE = 3000,
+  ID_TOGGLE_SHORTCUT = 4000
 };
 
 constexpr wchar_t kClass[] = L"JiDa.SettingWindow";
 constexpr wchar_t kPageClass[] = L"JiDa.SettingPage";
+constexpr wchar_t kKeyEditClass[] = L"JiDa.KeyEditDialog";
 constexpr int kClientWidth = 780;
 constexpr int kClientHeight = 530;
 
@@ -53,15 +62,176 @@ struct SettingCategory {
 constexpr SettingCategory kCategories[] = {
     {L"输入法", -1, 0},
     {L"候选窗口", -1, 0},
+    {L"设置快捷键", -1, 0},
     {L"输入选项", 0, PAGE_INPUT},
     {L"字库版本", 0, PAGE_CHARACTER_SET},
     {L"候选列表", 1, PAGE_CANDIDATES},
     {L"外观", 1, PAGE_APPEARANCE},
     {L"状态栏", -1, PAGE_STATUS},
+    {L"中英文切换", 2, PAGE_TOGGLE_SHORTCUT},
+    {L"定义软键盘", 2, PAGE_SOFT_KEYBOARD},
+    {L"自定义标点", 2, PAGE_CUSTOM_PUNCTUATION},
 };
+
+struct KeyEditState {
+  HWND parent = nullptr;
+  HINSTANCE instance = nullptr;
+  std::wstring title;
+  KeyCharacterPair values;
+  HWND normalEdit = nullptr;
+  HWND shiftedEdit = nullptr;
+  bool accepted = false;
+};
+
+LRESULT CALLBACK KeyEditWndProc(HWND window,
+                                UINT message,
+                                WPARAM wParam,
+                                LPARAM lParam) {
+  KeyEditState* state =
+      reinterpret_cast<KeyEditState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+  if (message == WM_NCCREATE) {
+    auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+    state = static_cast<KeyEditState*>(create->lpCreateParams);
+    SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+  }
+  if (!state)
+    return DefWindowProcW(window, message, wParam, lParam);
+
+  switch (message) {
+    case WM_CREATE: {
+      HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+      HWND label = CreateWindowExW(0, L"STATIC", state->title.c_str(),
+                                   WS_CHILD | WS_VISIBLE, 14, 12, 300, 22,
+                                   window, nullptr, state->instance, nullptr);
+      HWND normalLabel = CreateWindowExW(0, L"STATIC", L"正常字符",
+                                         WS_CHILD | WS_VISIBLE, 18, 48, 80, 22,
+                                         window, nullptr, state->instance,
+                                         nullptr);
+      state->normalEdit = CreateWindowExW(
+          WS_EX_CLIENTEDGE, L"EDIT", state->values.normal.c_str(),
+          WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 100, 46, 70, 24,
+          window, (HMENU)(INT_PTR)10, state->instance, nullptr);
+      HWND shiftedLabel = CreateWindowExW(0, L"STATIC", L"上档字符",
+                                          WS_CHILD | WS_VISIBLE, 182, 48, 80,
+                                          22, window, nullptr, state->instance,
+                                          nullptr);
+      state->shiftedEdit = CreateWindowExW(
+          WS_EX_CLIENTEDGE, L"EDIT", state->values.shifted.c_str(),
+          WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 264, 46, 45, 24,
+          window, (HMENU)(INT_PTR)11, state->instance, nullptr);
+      HWND ok = CreateWindowExW(0, L"BUTTON", L"确定",
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+                                142, 92, 75, 28, window, (HMENU)(INT_PTR)IDOK,
+                                state->instance, nullptr);
+      HWND cancel = CreateWindowExW(0, L"BUTTON", L"取消",
+                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                    226, 92, 75, 28, window,
+                                    (HMENU)(INT_PTR)IDCANCEL, state->instance,
+                                    nullptr);
+      SendMessageW(label, WM_SETFONT, (WPARAM)font, TRUE);
+      SendMessageW(normalLabel, WM_SETFONT, (WPARAM)font, TRUE);
+      SendMessageW(state->normalEdit, WM_SETFONT, (WPARAM)font, TRUE);
+      SendMessageW(shiftedLabel, WM_SETFONT, (WPARAM)font, TRUE);
+      SendMessageW(state->shiftedEdit, WM_SETFONT, (WPARAM)font, TRUE);
+      SendMessageW(ok, WM_SETFONT, (WPARAM)font, TRUE);
+      SendMessageW(cancel, WM_SETFONT, (WPARAM)font, TRUE);
+      SendMessageW(state->normalEdit, EM_SETLIMITTEXT, 1, 0);
+      SendMessageW(state->shiftedEdit, EM_SETLIMITTEXT, 1, 0);
+      return 0;
+    }
+    case WM_COMMAND:
+      if (LOWORD(wParam) == IDOK) {
+        wchar_t value[2] = {};
+        GetWindowTextW(state->normalEdit, value, _countof(value));
+        state->values.normal = value;
+        GetWindowTextW(state->shiftedEdit, value, _countof(value));
+        state->values.shifted = value;
+        state->accepted = true;
+        DestroyWindow(window);
+        return 0;
+      }
+      if (LOWORD(wParam) == IDCANCEL) {
+        DestroyWindow(window);
+        return 0;
+      }
+      break;
+    case WM_CLOSE:
+      DestroyWindow(window);
+      return 0;
+    case WM_NCDESTROY:
+      SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+      break;
+  }
+  return DefWindowProcW(window, message, wParam, lParam);
+}
+
+bool ShowKeyEditDialog(HWND parent,
+                       HINSTANCE instance,
+                       const wchar_t* title,
+                       KeyCharacterPair& values) {
+  static bool registered = false;
+  if (!registered) {
+    WNDCLASSEXW wc = {sizeof(wc)};
+    wc.lpfnWndProc = KeyEditWndProc;
+    wc.hInstance = instance;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = kKeyEditClass;
+    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+      return false;
+    registered = true;
+  }
+
+  KeyEditState state;
+  state.parent = parent;
+  state.instance = instance;
+  state.title = title;
+  state.values = values;
+  RECT ownerRect = {};
+  GetWindowRect(parent, &ownerRect);
+  int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - 330) / 2;
+  int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - 160) / 2;
+  HWND dialog = CreateWindowExW(
+      WS_EX_DLGMODALFRAME, kKeyEditClass, L"设置按键字符",
+      WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, 330, 160, parent, nullptr,
+      instance, &state);
+  if (!dialog)
+    return false;
+
+  EnableWindow(parent, FALSE);
+  ShowWindow(dialog, SW_SHOW);
+  SetFocus(state.normalEdit);
+  MSG message;
+  while (IsWindow(dialog)) {
+    BOOL result = GetMessageW(&message, nullptr, 0, 0);
+    if (result <= 0)
+      break;
+    if (!IsDialogMessageW(dialog, &message)) {
+      TranslateMessage(&message);
+      DispatchMessageW(&message);
+    }
+  }
+  EnableWindow(parent, TRUE);
+  SetForegroundWindow(parent);
+  if (state.accepted)
+    values = std::move(state.values);
+  return state.accepted;
+}
+
+std::wstring DefaultPunctuationValue(wchar_t keyCharacter) {
+  for (const auto& mapping : g_punctMap) {
+    if (mapping.first == keyCharacter)
+      return mapping.second;
+  }
+  return std::wstring(1, keyCharacter);
+}
 
 void SetCheck(HWND control, bool value) {
   SendMessageW(control, BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+bool IsKeyboardColorButton(int id) {
+  return id >= ID_BTN_KEY_LABEL_CLR && id <= ID_BTN_KEY_SHIFTED_CLR;
 }
 
 bool IsChecked(HWND control) {
@@ -119,6 +289,8 @@ CSettingWindow::CSettingWindow(HINSTANCE inst, HWND owner, ChangeCallback cb)
 CSettingWindow::~CSettingWindow() {
   if (_font)
     DeleteObject(_font);
+  if (_keyboardFont)
+    DeleteObject(_keyboardFont);
 }
 
 UINT CSettingWindow::_Dpi() const {
@@ -283,6 +455,10 @@ void CSettingWindow::_Layout() {
   _font = CreateFontW(-_S(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                       CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
+  _keyboardFont =
+      CreateFontW(-_S(10), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                  CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
 
   _tree = CreateWindowExW(
       WS_EX_CLIENTEDGE, WC_TREEVIEWW, L"",
@@ -405,6 +581,54 @@ void CSettingWindow::_Layout() {
         _controls.chkShowBar =
             _MkCheck(L"显示状态栏", 24, 108, 240, ID_SHOW_STATUS);
         break;
+
+      case PAGE_TOGGLE_SHORTCUT: {
+        _MkLabel(L"中英文切换快捷键", 22, 18, 500, 28);
+        _MkLabel(L"选择用于切换中英文输入状态的单键快捷键。", 22, 50, 520,
+                 24);
+        _MkLabel(L"切换按键", 24, 108, 100, 24);
+        _controls.cboChineseToggleShortcut =
+            _MkCombo(144, 104, 180, 180, ID_TOGGLE_SHORTCUT);
+        const struct {
+          const wchar_t* name;
+          ChineseToggleShortcut shortcut;
+        } options[] = {
+            {L"禁用", ChineseToggleShortcut::Disabled},
+            {L"左 Shift", ChineseToggleShortcut::LeftShift},
+            {L"右 Shift", ChineseToggleShortcut::RightShift},
+            {L"Shift", ChineseToggleShortcut::Shift},
+            {L"左 Ctrl", ChineseToggleShortcut::LeftControl},
+            {L"右 Ctrl", ChineseToggleShortcut::RightControl},
+            {L"Ctrl", ChineseToggleShortcut::Control},
+        };
+        for (const auto& option : options) {
+          LRESULT index = SendMessageW(_controls.cboChineseToggleShortcut,
+                                       CB_ADDSTRING, 0,
+                                       (LPARAM)option.name);
+          if (index != CB_ERR && index != CB_ERRSPACE)
+            SendMessageW(_controls.cboChineseToggleShortcut, CB_SETITEMDATA,
+                         index, (LPARAM)option.shortcut);
+        }
+        break;
+      }
+
+      case PAGE_SOFT_KEYBOARD:
+        _MkLabel(L"定义软键盘", 22, 18, 500, 28);
+        _MkLabel(L"左侧灰色显示键位符，右侧显示字符；上下依次为上档和正常字符。",
+                 22, 50, 548, 24);
+        _MkLabel(L"下方可分别设置键位符、正常字符和上档字符的显示颜色。", 22, 76,
+                 548, 24);
+        _BuildVirtualKeyboard();
+        break;
+
+      case PAGE_CUSTOM_PUNCTUATION:
+        _MkLabel(L"自定义标点", 22, 18, 500, 28);
+        _MkLabel(L"左侧灰色显示键位符，右侧显示标点；上下依次为上档和正常字符。",
+                 22, 50, 548, 24);
+        _MkLabel(L"下方可分别设置键位符、正常字符和上档字符的显示颜色。", 22, 76,
+                 548, 24);
+        _BuildVirtualKeyboard();
+        break;
     }
   }
 
@@ -416,6 +640,182 @@ void CSettingWindow::_Layout() {
 
   if (firstPageIndex >= 0)
     TreeView_SelectItem(_tree, categoryItems[firstPageIndex]);
+}
+
+void CSettingWindow::_BuildVirtualKeyboard() {
+  static const UINT rows[][13] = {
+      {VK_OEM_3, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+       VK_OEM_MINUS, VK_OEM_PLUS},
+      {'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', VK_OEM_4,
+       VK_OEM_6, VK_OEM_5},
+      {'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', VK_OEM_1, VK_OEM_7},
+      {'Z', 'X', 'C', 'V', 'B', 'N', 'M', VK_OEM_COMMA, VK_OEM_PERIOD,
+       VK_OEM_2}};
+  static const size_t rowSizes[] = {13, 13, 11, 10};
+  for (size_t row = 0; row < _countof(rows); ++row) {
+    int totalWidth = static_cast<int>(rowSizes[row]) * 38 +
+                     static_cast<int>(rowSizes[row] - 1) * 2;
+    int startX = 22 + (526 - totalWidth) / 2;
+    for (size_t column = 0; column < rowSizes[row]; ++column) {
+      UINT key = rows[row][column];
+      const wchar_t* label = L"";
+      for (size_t i = 0; i < g_virtualKeyboardKeyCount; ++i) {
+        if (g_virtualKeyboardKeys[i].key == key) {
+          label = g_virtualKeyboardKeys[i].label;
+          break;
+        }
+      }
+      HWND button = CreateWindowExW(
+          0, L"BUTTON", label,
+          WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+          _S(startX + static_cast<int>(column) * 40),
+          _S(108 + static_cast<int>(row) * 42), _S(38), _S(38),
+          _controlParent, (HMENU)(INT_PTR)(ID_VIRTUAL_KEY_BASE + key),
+          _instance, nullptr);
+      SendMessageW(button, WM_SETFONT, (WPARAM)_font, TRUE);
+      _keyboardButtons.push_back(button);
+    }
+  }
+
+  const struct {
+    const wchar_t* label;
+    int id;
+    int x;
+    int y;
+    int buttonY;
+  } colors[] = {
+      {L"键位符颜色", ID_BTN_KEY_LABEL_CLR, 24, 286, 310},
+      {L"正常字符颜色", ID_BTN_KEY_NORMAL_CLR, 204, 286, 310},
+      {L"上档字符颜色", ID_BTN_KEY_SHIFTED_CLR, 384, 286, 310},
+  };
+  HWND* colorControls[] = {
+      &_controls.btnKeyLabelClr, &_controls.btnKeyNormalClr,
+      &_controls.btnKeyShiftedClr};
+  for (size_t i = 0; i < _countof(colors); ++i) {
+    _MkLabel(colors[i].label, colors[i].x, colors[i].y, 160, 20);
+    *colorControls[i] =
+        _MkColorButton(colors[i].x, colors[i].buttonY, 150, 28, colors[i].id);
+    _keyboardColorButtons.push_back(*colorControls[i]);
+  }
+}
+
+void CSettingWindow::_RefreshVirtualKeyboard() {
+  for (HWND button : _keyboardButtons)
+    InvalidateRect(button, nullptr, TRUE);
+  for (HWND button : _keyboardColorButtons)
+    InvalidateRect(button, nullptr, TRUE);
+}
+
+void CSettingWindow::_DrawVirtualKey(const DRAWITEMSTRUCT& draw) {
+  UINT key = draw.CtlID - ID_VIRTUAL_KEY_BASE;
+  const VirtualKeyDefinition* definition = nullptr;
+  for (size_t i = 0; i < g_virtualKeyboardKeyCount; ++i) {
+    if (g_virtualKeyboardKeys[i].key == key) {
+      definition = &g_virtualKeyboardKeys[i];
+      break;
+    }
+  }
+  if (!definition)
+    return;
+
+  FillRect(draw.hDC, &draw.rcItem, GetSysColorBrush(COLOR_BTNFACE));
+  DrawEdge(draw.hDC, const_cast<RECT*>(&draw.rcItem),
+           (draw.itemState & ODS_SELECTED) ? EDGE_SUNKEN : EDGE_RAISED,
+           BF_RECT);
+  HGDIOBJ oldFont = SelectObject(draw.hDC, _keyboardFont);
+
+  const bool punctuationPage = _activePageId == PAGE_CUSTOM_PUNCTUATION;
+  std::wstring normal =
+      punctuationPage ? DefaultPunctuationValue(definition->normal)
+                      : std::wstring(1, definition->normal);
+  std::wstring shifted =
+      punctuationPage ? DefaultPunctuationValue(definition->shifted)
+                      : std::wstring(1, definition->shifted);
+  const auto& customMappings =
+      punctuationPage ? _draft.customPunctuation : _draft.softKeyboard;
+  auto custom = customMappings.find(key);
+
+  std::wstring normalText = normal;
+  std::wstring shiftedText = shifted;
+  if (custom != customMappings.end()) {
+    normalText = custom->second.normal;
+    shiftedText = custom->second.shifted;
+  }
+
+  SetBkMode(draw.hDC, TRANSPARENT);
+  const int left = draw.rcItem.left + _S(2);
+  const int right = draw.rcItem.right - _S(2);
+  const int top = draw.rcItem.top + _S(2);
+  const int bottom = draw.rcItem.bottom - _S(2);
+  const int rowMiddle = top + (bottom - top) / 2;
+  const int keyLabelRight = left + _S(12);
+
+  RECT shiftedKeyRect = {left, top, keyLabelRight, rowMiddle};
+  RECT normalKeyRect = {left, rowMiddle, keyLabelRight, bottom};
+  SetTextColor(draw.hDC, _draft.keyboardKeyLabelColor);
+  DrawTextW(draw.hDC, &definition->shifted, 1, &shiftedKeyRect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+  DrawTextW(draw.hDC, &definition->normal, 1, &normalKeyRect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+  RECT shiftedRect = {keyLabelRight + _S(3), top, right, rowMiddle};
+  RECT normalRect = {keyLabelRight + _S(3), rowMiddle, right, bottom};
+  SetTextColor(draw.hDC, _draft.keyboardShiftedColor);
+  DrawTextW(draw.hDC, shiftedText.c_str(), static_cast<int>(shiftedText.size()),
+            &shiftedRect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+  SetTextColor(draw.hDC, _draft.keyboardNormalColor);
+  DrawTextW(draw.hDC, normalText.c_str(), static_cast<int>(normalText.size()),
+            &normalRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+  if (draw.itemState & ODS_FOCUS)
+    DrawFocusRect(draw.hDC, &draw.rcItem);
+  SelectObject(draw.hDC, oldFont);
+}
+
+void CSettingWindow::_EditVirtualKey(UINT key, int pageId) {
+  const VirtualKeyDefinition* definition = nullptr;
+  for (size_t i = 0; i < g_virtualKeyboardKeyCount; ++i) {
+    if (g_virtualKeyboardKeys[i].key == key) {
+      definition = &g_virtualKeyboardKeys[i];
+      break;
+    }
+  }
+  if (!definition)
+    return;
+
+  bool punctuationPage = pageId == PAGE_CUSTOM_PUNCTUATION;
+  auto& mappings = punctuationPage ? _draft.customPunctuation
+                                   : _draft.softKeyboard;
+  KeyCharacterPair values;
+  auto mapping = mappings.find(key);
+  if (mapping != mappings.end()) {
+    values = mapping->second;
+  } else if (punctuationPage) {
+    values.normal = DefaultPunctuationValue(definition->normal);
+    values.shifted = DefaultPunctuationValue(definition->shifted);
+  } else {
+    values.normal = definition->normal;
+    values.shifted = definition->shifted;
+  }
+
+  wchar_t title[128];
+  swprintf_s(title, L"%ls 键 - 正常字符和上档字符", definition->label);
+  if (!ShowKeyEditDialog(_hwnd, _instance, title, values))
+    return;
+
+  KeyCharacterPair defaults;
+  if (punctuationPage) {
+    defaults.normal = DefaultPunctuationValue(definition->normal);
+    defaults.shifted = DefaultPunctuationValue(definition->shifted);
+  } else {
+    defaults.normal = definition->normal;
+    defaults.shifted = definition->shifted;
+  }
+  if (values.normal == defaults.normal && values.shifted == defaults.shifted)
+    mappings.erase(key);
+  else
+    mappings[key] = std::move(values);
+  _RefreshVirtualKeyboard();
 }
 
 void CSettingWindow::_LoadFromConfig() {
@@ -432,6 +832,8 @@ void CSettingWindow::_LoadFromConfig() {
   SetCheck(_controls.radHorz, _draft.candLayout == CandLayout::Horizontal);
   SelectComboData(_controls.cboCharacterSet,
                   static_cast<int>(_draft.characterSetVersion));
+  SelectComboData(_controls.cboChineseToggleShortcut,
+                  static_cast<int>(_draft.chineseToggleShortcut));
 
   wchar_t text[8];
   swprintf_s(text, L"%d", _draft.candPageSize);
@@ -444,6 +846,7 @@ void CSettingWindow::_LoadFromConfig() {
   InvalidateRect(_controls.btnTextClr, nullptr, TRUE);
   InvalidateRect(_controls.btnBgClr, nullptr, TRUE);
   InvalidateRect(_controls.btnSelClr, nullptr, TRUE);
+  _RefreshVirtualKeyboard();
 }
 
 void CSettingWindow::_SaveToConfig() {
@@ -455,6 +858,16 @@ void CSettingWindow::_SaveToConfig() {
   _draft.inlinePreedit = IsChecked(_controls.chkInline);
   _draft.shiftDirectCommit = IsChecked(_controls.chkShiftDirect);
   _draft.showStatusBar = IsChecked(_controls.chkShowBar);
+  int shortcutIndex = (int)SendMessageW(
+      _controls.cboChineseToggleShortcut, CB_GETCURSEL, 0, 0);
+  if (shortcutIndex >= 0) {
+    int shortcut = (int)SendMessageW(_controls.cboChineseToggleShortcut,
+                                     CB_GETITEMDATA, shortcutIndex, 0);
+    if (shortcut >= static_cast<int>(ChineseToggleShortcut::Disabled) &&
+        shortcut <= static_cast<int>(ChineseToggleShortcut::Control))
+      _draft.chineseToggleShortcut =
+          static_cast<ChineseToggleShortcut>(shortcut);
+  }
   _draft.candLayout =
       IsChecked(_controls.radVert) ? CandLayout::Vertical : CandLayout::Horizontal;
 
@@ -484,6 +897,8 @@ void CSettingWindow::_ResetToDefault() {
   SetCheck(_controls.chkInline, _draft.inlinePreedit);
   SetCheck(_controls.chkShiftDirect, _draft.shiftDirectCommit);
   SetCheck(_controls.chkShowBar, _draft.showStatusBar);
+  SelectComboData(_controls.cboChineseToggleShortcut,
+                  static_cast<int>(_draft.chineseToggleShortcut));
   SetCheck(_controls.radVert, _draft.candLayout == CandLayout::Vertical);
   SetCheck(_controls.radHorz, _draft.candLayout == CandLayout::Horizontal);
   SelectComboData(_controls.cboCharacterSet,
@@ -500,9 +915,11 @@ void CSettingWindow::_ResetToDefault() {
   InvalidateRect(_controls.btnTextClr, nullptr, TRUE);
   InvalidateRect(_controls.btnBgClr, nullptr, TRUE);
   InvalidateRect(_controls.btnSelClr, nullptr, TRUE);
+  _RefreshVirtualKeyboard();
 }
 
 void CSettingWindow::_SelectPage(int pageId) {
+  _activePageId = pageId;
   for (const Page& page : _pages)
     ShowWindow(page.window, page.id == pageId ? SW_SHOW : SW_HIDE);
 }
@@ -569,6 +986,11 @@ LRESULT CSettingWindow::_Handle(UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_DRAWITEM: {
       auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+      if (draw->CtlID >= ID_VIRTUAL_KEY_BASE &&
+          draw->CtlID < ID_VIRTUAL_KEY_BASE + 256) {
+        _DrawVirtualKey(*draw);
+        return TRUE;
+      }
       COLORREF color = RGB(0, 0, 0);
       switch (draw->CtlID) {
         case ID_BTN_TEXTCLR:
@@ -580,11 +1002,21 @@ LRESULT CSettingWindow::_Handle(UINT msg, WPARAM wParam, LPARAM lParam) {
         case ID_BTN_SELCLR:
           color = _draft.candSelBgColor;
           break;
+        case ID_BTN_KEY_LABEL_CLR:
+          color = _draft.keyboardKeyLabelColor;
+          break;
+        case ID_BTN_KEY_NORMAL_CLR:
+          color = _draft.keyboardNormalColor;
+          break;
+        case ID_BTN_KEY_SHIFTED_CLR:
+          color = _draft.keyboardShiftedColor;
+          break;
         default:
           break;
       }
       if (draw->CtlID == ID_BTN_TEXTCLR || draw->CtlID == ID_BTN_BGCLR ||
-          draw->CtlID == ID_BTN_SELCLR) {
+          draw->CtlID == ID_BTN_SELCLR ||
+          IsKeyboardColorButton(draw->CtlID)) {
         HBRUSH brush = CreateSolidBrush(color);
         FillRect(draw->hDC, &draw->rcItem, brush);
         DeleteObject(brush);
@@ -611,6 +1043,11 @@ LRESULT CSettingWindow::_Handle(UINT msg, WPARAM wParam, LPARAM lParam) {
       break;
     }
     case WM_COMMAND:
+      if (LOWORD(wParam) >= ID_VIRTUAL_KEY_BASE &&
+          LOWORD(wParam) < ID_VIRTUAL_KEY_BASE + 256) {
+        _EditVirtualKey(LOWORD(wParam) - ID_VIRTUAL_KEY_BASE, _activePageId);
+        return 0;
+      }
       switch (LOWORD(wParam)) {
         case ID_BTN_OK:
           _Close(true);
@@ -679,6 +1116,36 @@ LRESULT CSettingWindow::_Handle(UINT msg, WPARAM wParam, LPARAM lParam) {
                   luminance < 128 ? RGB(255, 255, 255) : RGB(0, 0, 0);
             }
             InvalidateRect((HWND)lParam, nullptr, TRUE);
+          }
+          return 0;
+        }
+        case ID_BTN_KEY_LABEL_CLR:
+        case ID_BTN_KEY_NORMAL_CLR:
+        case ID_BTN_KEY_SHIFTED_CLR: {
+          static COLORREF customColors[16] = {};
+          CHOOSECOLORW chooseColor = {};
+          chooseColor.lStructSize = sizeof(chooseColor);
+          chooseColor.hwndOwner = _hwnd;
+          chooseColor.lpCustColors = customColors;
+          chooseColor.Flags = CC_FULLOPEN | CC_RGBINIT;
+          COLORREF* selectedColor = nullptr;
+          switch (LOWORD(wParam)) {
+            case ID_BTN_KEY_LABEL_CLR:
+              selectedColor = &_draft.keyboardKeyLabelColor;
+              break;
+            case ID_BTN_KEY_NORMAL_CLR:
+              selectedColor = &_draft.keyboardNormalColor;
+              break;
+            case ID_BTN_KEY_SHIFTED_CLR:
+              selectedColor = &_draft.keyboardShiftedColor;
+              break;
+          }
+          if (selectedColor) {
+            chooseColor.rgbResult = *selectedColor;
+            if (ChooseColorW(&chooseColor)) {
+              *selectedColor = chooseColor.rgbResult;
+              _RefreshVirtualKeyboard();
+            }
           }
           return 0;
         }

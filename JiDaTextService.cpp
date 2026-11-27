@@ -6,6 +6,11 @@
 #include "SettingWindow.h"
 
 static wchar_t VkToChar(WPARAM vk, LPARAM lParam, bool shift) {
+  wchar_t configuredCharacter = 0;
+  if (GetSoftKeyboardCharacter(static_cast<UINT>(vk), shift,
+                               configuredCharacter))
+    return configuredCharacter;
+
   if (vk >= '0' && vk <= '9' && shift) {
     static constexpr wchar_t shiftedDigits[] = L")!@#$%^&*(";
     return shiftedDigits[vk - '0'];
@@ -27,6 +32,53 @@ static wchar_t VkToChar(WPARAM vk, LPARAM lParam, bool shift) {
   wchar_t buf[4] = {0};
   int n = ToUnicode((UINT)vk, (UINT)((lParam >> 16) & 0xFF), ks, buf, 2, 0);
   return (n == 1) ? buf[0] : 0;
+}
+
+static bool IsShortcutKey(ChineseToggleShortcut shortcut,
+                          WPARAM key,
+                          LPARAM keyData) {
+  if (shortcut == ChineseToggleShortcut::Disabled ||
+      ((keyData >> 30) & 1) != 0)
+    return false;
+
+  bool leftShift = key == VK_LSHIFT ||
+                   (key == VK_SHIFT && ((keyData >> 16) & 0xFF) == 0x2A);
+  bool rightShift = key == VK_RSHIFT ||
+                    (key == VK_SHIFT && ((keyData >> 16) & 0xFF) == 0x36);
+  bool leftControl =
+      key == VK_LCONTROL ||
+      (key == VK_CONTROL && ((keyData >> 24) & 1) == 0);
+  bool rightControl =
+      key == VK_RCONTROL ||
+      (key == VK_CONTROL && ((keyData >> 24) & 1) != 0);
+  if ((leftShift || rightShift) &&
+      ((GetKeyState(VK_CONTROL) & 0x8000) ||
+       (GetKeyState(VK_MENU) & 0x8000) || (GetKeyState(VK_LWIN) & 0x8000) ||
+       (GetKeyState(VK_RWIN) & 0x8000)))
+    return false;
+  if ((leftControl || rightControl) &&
+      ((GetKeyState(VK_SHIFT) & 0x8000) ||
+       (GetKeyState(VK_MENU) & 0x8000) || (GetKeyState(VK_LWIN) & 0x8000) ||
+       (GetKeyState(VK_RWIN) & 0x8000)))
+    return false;
+  switch (shortcut) {
+    case ChineseToggleShortcut::LeftShift:
+      return leftShift;
+    case ChineseToggleShortcut::RightShift:
+      return rightShift;
+    case ChineseToggleShortcut::Shift:
+      return (leftShift && !(GetKeyState(VK_RSHIFT) & 0x8000)) ||
+             (rightShift && !(GetKeyState(VK_LSHIFT) & 0x8000));
+    case ChineseToggleShortcut::LeftControl:
+      return leftControl;
+    case ChineseToggleShortcut::RightControl:
+      return rightControl;
+    case ChineseToggleShortcut::Control:
+      return (leftControl && !(GetKeyState(VK_RCONTROL) & 0x8000)) ||
+             (rightControl && !(GetKeyState(VK_LCONTROL) & 0x8000));
+    default:
+      return false;
+  }
 }
 
 // 按五笔规则生成词组编码：
@@ -306,6 +358,11 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   _shiftDownForKey = shift;
 
+  if (IsShortcutKey(g_config.chineseToggleShortcut, wParam, lParam)) {
+    *pfEaten = TRUE;
+    return S_OK;
+  }
+
   // 1. 造词窗口可见 → 独占
   if (_phraseWnd && _phraseWnd->IsVisible()) {
     *pfEaten = TRUE;
@@ -341,10 +398,9 @@ STDMETHODIMP CJiDaTextService::OnTestKeyDown(ITfContext* pic,
   if (GetKeyState(VK_RWIN) & 0x8000)
     return S_OK;
 
-  bool rightShiftKey =
-      wParam == VK_RSHIFT ||
-      (wParam == VK_SHIFT && ((lParam >> 16) & 0xFF) == 0x36);
-  if (rightShiftKey) {
+  wchar_t configuredCharacter = 0;
+  if (GetSoftKeyboardCharacter(static_cast<UINT>(wParam), shift,
+                               configuredCharacter)) {
     *pfEaten = TRUE;
     return S_OK;
   }
@@ -500,6 +556,17 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   _activeCtx = pic;
   _activeCtx->AddRef();
 
+  if (IsShortcutKey(g_config.chineseToggleShortcut, wParam, lParam)) {
+    *pfEaten = TRUE;
+    _OnStatusCommand(StatusCommand::ToggleChinese);
+    if (!_status.chinese &&
+        (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount())) {
+      _CancelWithContext(pic);
+      _HideCandidates();
+    }
+    return S_OK;
+  }
+
   // Ctrl + 句号：切换中英文标点
   if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == VK_OEM_PERIOD) {
     *pfEaten = TRUE;
@@ -523,26 +590,19 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
     return S_OK;
   }
 
-  // 仅右 Shift 键本身切换中英文，不能把按住右 Shift 的组合键当作切换命令。
-  bool rightShiftKey =
-      wParam == VK_RSHIFT ||
-      (wParam == VK_SHIFT && ((lParam >> 16) & 0xFF) == 0x36);
-  if (rightShiftKey && (GetKeyState(VK_RSHIFT) & 0x8000) != 0) {
-    _OnStatusCommand(StatusCommand::ToggleChinese);
-    if (!_status.chinese) {
-      *pfEaten = TRUE;
-      // 如果不再是中文模式，但有候选框，则关闭
-      if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
-        _CancelWithContext(pic);
-        _HideCandidates();
-      }
-    }
-    return S_OK;
-  }
+  wchar_t configuredCharacter = 0;
+  bool hasConfiguredCharacter =
+      GetSoftKeyboardCharacter(static_cast<UINT>(wParam), shift,
+                               configuredCharacter);
 
   // ---------------- 英文模式 ----------------
   // 英文模式：全角时接管并转全角输出；半角时全部交宿主
   if (!_status.chinese) {
+    if (hasConfiguredCharacter && !_tempEnglishMode) {
+      *pfEaten = TRUE;
+      _CommitAndEnd(pic, std::wstring(1, configuredCharacter));
+      return S_OK;
+    }
     if (_status.fullShape) {
       wchar_t ch = 0;
       if (wParam == VK_SPACE) {
@@ -642,6 +702,35 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
         _ShowTempEnglish(pic);
       }
     }
+    return S_OK;
+  }
+
+  if (hasConfiguredCharacter) {
+    wchar_t lowerCharacter = towlower(configuredCharacter);
+    if (!shift && lowerCharacter >= L'a' && lowerCharacter <= L'z') {
+      std::wstring committed, newBuffer;
+      EngineAction action =
+          _engine.OnLetter(lowerCharacter, committed, newBuffer);
+      *pfEaten = action != EngineAction::None;
+      _HandleLetterResult(pic, action, committed, newBuffer);
+      if (!_engine.Buffer().empty() && !IsJiDaTableLoaded() && _candWnd)
+        _candWnd->WatchForTableLoad();
+      return S_OK;
+    }
+
+    *pfEaten = TRUE;
+    std::wstring output(1, configuredCharacter);
+    if (!_engine.Buffer().empty() || _engine.IsWaitingDateOrAmount()) {
+      if (!_engine.Candidates().empty()) {
+        const std::wstring& firstCandidate = _engine.Candidates().front().text;
+        _engine.OnCommitted(_engine.Buffer(), firstCandidate);
+        output.insert(0, firstCandidate);
+      }
+      _CancelWithContext(pic);
+      _engine.Reset();
+      _HideCandidates();
+    }
+    _CommitAndEnd(pic, output);
     return S_OK;
   }
 
@@ -871,13 +960,25 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
   if (!_engine.Buffer().empty()) {
     wchar_t ch = VkToChar(wParam, lParam, shift);
     std::wstring punct, firstCand;
-    if (ch && _engine.OnPunctuation(ch, punct, firstCand)) {
+    std::wstring customPunctuation;
+    auto configuredPunctuation =
+        g_config.customPunctuation.find(static_cast<UINT>(wParam));
+    if (configuredPunctuation != g_config.customPunctuation.end()) {
+      const std::wstring& value =
+          shift ? configuredPunctuation->second.shifted
+                : configuredPunctuation->second.normal;
+      customPunctuation = value;
+    }
+    if (ch && _engine.OnPunctuation(ch, punct, firstCand,
+                                   customPunctuation)) {
       *pfEaten = TRUE;
 
       // 1) 确定标点文本
       std::wstring outputPunct;
       if (_status.chinesePunctuation) {
-        if (ch == L'\'' || ch == L'"')
+        if (!customPunctuation.empty())
+          outputPunct = customPunctuation;
+        else if (ch == L'\'' || ch == L'"')
           outputPunct = _ProcessQuote(ch);
         else
           outputPunct = punct;
@@ -919,19 +1020,21 @@ STDMETHODIMP CJiDaTextService::OnKeyDown(ITfContext* pic,
       *pfEaten = TRUE;
       std::wstring output;
       if (_status.chinesePunctuation) {
-        if (ch == L'\'' || ch == L'"') {
+        auto configuredPunctuation =
+            g_config.customPunctuation.find(static_cast<UINT>(wParam));
+        bool hasCustomPunctuation =
+            configuredPunctuation != g_config.customPunctuation.end() &&
+            !(shift ? configuredPunctuation->second.shifted
+                    : configuredPunctuation->second.normal)
+                 .empty();
+        if (hasCustomPunctuation) {
+          output = GetPunctuationCharacter(static_cast<UINT>(wParam), shift,
+                                           ch);
+        } else if (ch == L'\'' || ch == L'"') {
           output = _ProcessQuote(ch);  // 引号配对
         } else {
-          bool found = false;
-          for (auto& p : g_punctMap) {
-            if (p.first == ch) {
-              output = p.second;
-              found = true;
-              break;
-            }
-          }
-          if (!found)
-            output = std::wstring(1, ch);
+          output = GetPunctuationCharacter(static_cast<UINT>(wParam), shift,
+                                           ch);
         }
       } else {
         output = std::wstring(1, ch);  // 英文标点交给 _CommitAndEnd 全角化

@@ -302,9 +302,18 @@ EngineAction JiDaEngine::OnSemicolonTail(wchar_t ch, std::wstring& committed) {
 
 bool JiDaEngine::OnPunctuation(wchar_t ch,
                                std::wstring& punct,
-                               std::wstring& firstCand) {
+                               std::wstring& firstCand,
+                               const std::wstring& customPunctuation) {
   if (!g_config.punctuationTop || buffer_.empty())
     return false;
+  if (!customPunctuation.empty()) {
+    punct = customPunctuation;
+    if (!candidates_.empty()) {
+      firstCand = candidates_.front().text;
+      CommitText(firstCand);
+    }
+    return true;
+  }
   for (auto& p : g_punctMap) {
     if (p.first == ch) {
       punct = p.second;

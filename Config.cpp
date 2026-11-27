@@ -75,6 +75,36 @@ static void ReadStr(const wchar_t* sec,
 static void WriteStr(const wchar_t* sec, const wchar_t* key, const wchar_t* v) {
   WritePrivateProfileStringW(sec, key, v, GetJiDaConfigPath().c_str());
 }
+static void ReadKeyMappings(const wchar_t* section,
+                            std::map<UINT, KeyCharacterPair>& mappings) {
+  mappings.clear();
+  for (size_t i = 0; i < g_virtualKeyboardKeyCount; ++i) {
+    const VirtualKeyDefinition& key = g_virtualKeyboardKeys[i];
+    wchar_t normalKey[32], shiftedKey[32];
+    swprintf_s(normalKey, L"%03X_Normal", key.key);
+    swprintf_s(shiftedKey, L"%03X_Shift", key.key);
+    wchar_t normal[4] = {}, shifted[4] = {};
+    ReadStr(section, normalKey, L"", normal, _countof(normal));
+    ReadStr(section, shiftedKey, L"", shifted, _countof(shifted));
+    if (normal[0] || shifted[0])
+      mappings[key.key] = {normal, shifted};
+  }
+}
+static void WriteKeyMappings(
+    const wchar_t* section,
+    const std::map<UINT, KeyCharacterPair>& mappings) {
+  for (size_t i = 0; i < g_virtualKeyboardKeyCount; ++i) {
+    const VirtualKeyDefinition& key = g_virtualKeyboardKeys[i];
+    wchar_t normalKey[32], shiftedKey[32];
+    swprintf_s(normalKey, L"%03X_Normal", key.key);
+    swprintf_s(shiftedKey, L"%03X_Shift", key.key);
+    auto mapping = mappings.find(key.key);
+    WriteStr(section, normalKey,
+             mapping == mappings.end() ? L"" : mapping->second.normal.c_str());
+    WriteStr(section, shiftedKey,
+             mapping == mappings.end() ? L"" : mapping->second.shifted.c_str());
+  }
+}
 
 void LoadJiDaConfig() {
   if (GetFileAttributesW(GetJiDaConfigPath().c_str()) ==
@@ -94,6 +124,23 @@ void LoadJiDaConfig() {
       ReadBool(in, L"InlinePreedit", g_config.inlinePreedit);
   g_config.shiftDirectCommit =
       ReadBool(in, L"ShiftDirectCommit", g_config.shiftDirectCommit);
+  int shortcut = ReadInt(in, L"ChineseToggleShortcut",
+                         static_cast<int>(g_config.chineseToggleShortcut));
+  if (shortcut >= static_cast<int>(ChineseToggleShortcut::Disabled) &&
+      shortcut <= static_cast<int>(ChineseToggleShortcut::Control))
+    g_config.chineseToggleShortcut =
+        static_cast<ChineseToggleShortcut>(shortcut);
+  ReadKeyMappings(L"SoftKeyboard", g_config.softKeyboard);
+  ReadKeyMappings(L"Punctuation", g_config.customPunctuation);
+  const wchar_t* keyboardDisplay = L"KeyboardDisplay";
+  g_config.keyboardKeyLabelColor =
+      ReadColor(keyboardDisplay, L"KeyLabelColor",
+                g_config.keyboardKeyLabelColor);
+  g_config.keyboardNormalColor =
+      ReadColor(keyboardDisplay, L"NormalColor", g_config.keyboardNormalColor);
+  g_config.keyboardShiftedColor =
+      ReadColor(keyboardDisplay, L"ShiftedColor",
+                g_config.keyboardShiftedColor);
 
   const wchar_t* DP = L"Display";
   int vert = ReadInt(DP, L"Vertical",
@@ -140,6 +187,14 @@ void SaveJiDaConfig() {
                              GetJiDaConfigPath().c_str());
   WriteBool(in, L"InlinePreedit", g_config.inlinePreedit);
   WriteBool(in, L"ShiftDirectCommit", g_config.shiftDirectCommit);
+  WriteInt(in, L"ChineseToggleShortcut",
+           static_cast<int>(g_config.chineseToggleShortcut));
+  WriteKeyMappings(L"SoftKeyboard", g_config.softKeyboard);
+  WriteKeyMappings(L"Punctuation", g_config.customPunctuation);
+  const wchar_t* keyboardDisplay = L"KeyboardDisplay";
+  WriteColor(keyboardDisplay, L"KeyLabelColor", g_config.keyboardKeyLabelColor);
+  WriteColor(keyboardDisplay, L"NormalColor", g_config.keyboardNormalColor);
+  WriteColor(keyboardDisplay, L"ShiftedColor", g_config.keyboardShiftedColor);
 
   const wchar_t* DP = L"Display";
   WriteInt(DP, L"Vertical",

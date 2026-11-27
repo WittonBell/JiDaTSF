@@ -21,6 +21,28 @@ enum class CharacterSetVersion : int {
   GB18030_2005 = 3
 };
 
+enum class ChineseToggleShortcut : int {
+  Disabled = 0,
+  LeftShift,
+  RightShift,
+  Shift,
+  LeftControl,
+  RightControl,
+  Control
+};
+
+struct KeyCharacterPair {
+  std::wstring normal;
+  std::wstring shifted;
+};
+
+struct VirtualKeyDefinition {
+  UINT key;
+  const wchar_t* label;
+  wchar_t normal;
+  wchar_t shifted;
+};
+
 struct WubiEntry {
   std::wstring code;
   std::wstring word;
@@ -50,6 +72,13 @@ struct JiDaConfig {
   bool showStatusBar = true;
   // Shift 直接上屏
   bool shiftDirectCommit = false;
+  ChineseToggleShortcut chineseToggleShortcut =
+      ChineseToggleShortcut::RightShift;
+  std::map<UINT, KeyCharacterPair> softKeyboard;
+  std::map<UINT, KeyCharacterPair> customPunctuation;
+  COLORREF keyboardKeyLabelColor = RGB(128, 128, 128);
+  COLORREF keyboardNormalColor = RGB(0, 0, 0);
+  COLORREF keyboardShiftedColor = RGB(220, 0, 0);
 
   CandLayout candLayout = CandLayout::Horizontal;
   int candPageSize = 9;
@@ -76,6 +105,13 @@ extern std::unordered_map<std::wstring, std::wstring> g_charFullCode;
 
 extern std::vector<std::pair<wchar_t, std::wstring>> g_punctMap;
 extern JiDaConfig g_config;
+extern const VirtualKeyDefinition g_virtualKeyboardKeys[];
+extern const size_t g_virtualKeyboardKeyCount;
+
+bool GetSoftKeyboardCharacter(UINT key, bool shifted, wchar_t& character);
+std::wstring GetPunctuationCharacter(UINT key,
+                                     bool shifted,
+                                     wchar_t fallback);
 
 inline int CandPageSize() {
   return g_config.candPageSize;

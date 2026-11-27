@@ -34,6 +34,66 @@ std::vector<std::pair<wchar_t, std::wstring>> g_punctMap = {
     {L'/', L"/"},  {L'\\', L"、"}, {L'\'', L"‘"}, {L'"', L"“"}};
 JiDaConfig g_config;
 
+const VirtualKeyDefinition g_virtualKeyboardKeys[] = {
+    {'1', L"1", L'1', L'!'}, {'2', L"2", L'2', L'@'},
+    {'3', L"3", L'3', L'#'}, {'4', L"4", L'4', L'$'},
+    {'5', L"5", L'5', L'%'}, {'6', L"6", L'6', L'^'},
+    {'7', L"7", L'7', L'&'}, {'8', L"8", L'8', L'*'},
+    {'9', L"9", L'9', L'('}, {'0', L"0", L'0', L')'},
+    {VK_OEM_MINUS, L"-", L'-', L'_'},
+    {VK_OEM_PLUS, L"=", L'=', L'+'},
+    {'Q', L"Q", L'q', L'Q'}, {'W', L"W", L'w', L'W'},
+    {'E', L"E", L'e', L'E'}, {'R', L"R", L'r', L'R'},
+    {'T', L"T", L't', L'T'}, {'Y', L"Y", L'y', L'Y'},
+    {'U', L"U", L'u', L'U'}, {'I', L"I", L'i', L'I'},
+    {'O', L"O", L'o', L'O'}, {'P', L"P", L'p', L'P'},
+    {VK_OEM_4, L"[", L'[', L'{'}, {VK_OEM_6, L"]", L']', L'}'},
+    {VK_OEM_5, L"\\", L'\\', L'|'},
+    {'A', L"A", L'a', L'A'}, {'S', L"S", L's', L'S'},
+    {'D', L"D", L'd', L'D'}, {'F', L"F", L'f', L'F'},
+    {'G', L"G", L'g', L'G'}, {'H', L"H", L'h', L'H'},
+    {'J', L"J", L'j', L'J'}, {'K', L"K", L'k', L'K'},
+    {'L', L"L", L'l', L'L'}, {VK_OEM_1, L";", L';', L':'},
+    {VK_OEM_7, L"'", L'\'', L'"'},
+    {VK_OEM_3, L"`", L'`', L'~'},
+    {'Z', L"Z", L'z', L'Z'}, {'X', L"X", L'x', L'X'},
+    {'C', L"C", L'c', L'C'}, {'V', L"V", L'v', L'V'},
+    {'B', L"B", L'b', L'B'}, {'N', L"N", L'n', L'N'},
+    {'M', L"M", L'm', L'M'}, {VK_OEM_COMMA, L",", L',', L'<'},
+    {VK_OEM_PERIOD, L".", L'.', L'>'},
+    {VK_OEM_2, L"/", L'/', L'?'}};
+const size_t g_virtualKeyboardKeyCount =
+    sizeof(g_virtualKeyboardKeys) / sizeof(g_virtualKeyboardKeys[0]);
+
+bool GetSoftKeyboardCharacter(UINT key, bool shifted, wchar_t& character) {
+  auto found = g_config.softKeyboard.find(key);
+  if (found == g_config.softKeyboard.end())
+    return false;
+  const std::wstring& value =
+      shifted ? found->second.shifted : found->second.normal;
+  if (value.empty())
+    return false;
+  character = value[0];
+  return true;
+}
+
+std::wstring GetPunctuationCharacter(UINT key,
+                                     bool shifted,
+                                     wchar_t fallback) {
+  auto configured = g_config.customPunctuation.find(key);
+  if (configured != g_config.customPunctuation.end()) {
+    const std::wstring& value =
+        shifted ? configured->second.shifted : configured->second.normal;
+    if (!value.empty())
+      return value;
+  }
+  for (const auto& mapping : g_punctMap) {
+    if (mapping.first == fallback)
+      return mapping.second;
+  }
+  return std::wstring(1, fallback);
+}
+
 // ---------- 词库加载状态 ----------
 static std::wstring s_tablePath;
 static std::atomic<bool> s_tableLoaded{false};

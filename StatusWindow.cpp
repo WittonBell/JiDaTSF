@@ -667,9 +667,40 @@ std::wstring CStatusWindow::_TooltipText(int index) const {
   if (index < 0 || index >= _buttonCount)
     return L"";
   switch (_buttons[index].command) {
-    case StatusCommand::ToggleChinese:
-      return _status.chinese ? L"中文输入（点击或按右 Shift 切换到英文）"
-                             : L"英文输入（点击或按右 Shift 切换到中文）";
+    case StatusCommand::ToggleChinese: {
+      std::wstring text = _status.chinese ? L"中文输入（点击"
+                                          : L"英文输入（点击";
+      const wchar_t* shortcut = nullptr;
+      switch (g_config.chineseToggleShortcut) {
+        case ChineseToggleShortcut::LeftShift:
+          shortcut = L"左 Shift";
+          break;
+        case ChineseToggleShortcut::RightShift:
+          shortcut = L"右 Shift";
+          break;
+        case ChineseToggleShortcut::Shift:
+          shortcut = L"Shift";
+          break;
+        case ChineseToggleShortcut::LeftControl:
+          shortcut = L"左 Ctrl";
+          break;
+        case ChineseToggleShortcut::RightControl:
+          shortcut = L"右 Ctrl";
+          break;
+        case ChineseToggleShortcut::Control:
+          shortcut = L"Ctrl";
+          break;
+        default:
+          break;
+      }
+      if (shortcut) {
+        text += L"或按";
+        text += shortcut;
+        text += L" ";
+      }
+      text += _status.chinese ? L"切换到英文）" : L"切换到中文）";
+      return text;
+    }
     case StatusCommand::ToggleFullShape:
       return _status.fullShape ? L"全角（点击或按 Shift+空格 切换到半角）"
                                : L"半角（点击或按 Shift+空格 切换到全角）";

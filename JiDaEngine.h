@@ -24,7 +24,10 @@ class JiDaEngine {
   bool OnDigit(int digit, std::wstring& committed);
   bool OnSpace(std::wstring& committed);  // 提交高亮项
   bool OnSemicolon(std::wstring& committed, bool& waitForDateOrAmount);
-  bool OnPunctuation(wchar_t ch, std::wstring& punct, std::wstring& firstCand);
+  bool OnPunctuation(wchar_t ch,
+                     std::wstring& punct,
+                     std::wstring& firstCand,
+                     const std::wstring& customPunctuation = L"");
   void OnBackspace();
   EngineAction OnSemicolonTail(wchar_t ch, std::wstring& committed);
   bool OnEnter(std::wstring& committed);  // 取消当前输入
