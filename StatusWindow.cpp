@@ -49,6 +49,7 @@ bool CStatusWindow::Create(HINSTANCE instance,
                            const wchar_t* imeName,
                            const InputStatus& initialStatus,
                            CommandHandler handler,
+                           ActiveProfileCheck activeProfileCheck,
                            int x,
                            int y) {
   if (_hwnd)
@@ -57,6 +58,9 @@ bool CStatusWindow::Create(HINSTANCE instance,
   _instance = instance;
   _owner = owner;
   _handler = std::move(handler);
+  _activeProfileCheck = std::move(activeProfileCheck);
+  if (_activeProfileCheck)
+    _inputMethodActive = _activeProfileCheck();
   _status = initialStatus;
 
   if (imeName && *imeName)
@@ -147,8 +151,10 @@ bool CStatusWindow::Create(HINSTANCE instance,
     y = workB - realH;
 
   // 5) 显示（SWP_SHOWWINDOW 保证窗口真实可见）
+  const UINT showFlags =
+      _inputMethodActive && g_config.showStatusBar ? SWP_SHOWWINDOW : 0;
   SetWindowPos(_hwnd, HWND_TOPMOST, x, y, realW, realH,
-               SWP_NOACTIVATE | SWP_SHOWWINDOW);
+               SWP_NOACTIVATE | showFlags);
   UpdateWindow(_hwnd);
 
   // 6) 日志：记录创建成功及坐标尺寸
@@ -188,7 +194,7 @@ void CStatusWindow::Destroy() {
 }
 
 void CStatusWindow::Show() {
-  if (!_hwnd)
+  if (!_hwnd || !_inputMethodActive || !g_config.showStatusBar)
     return;
   ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
 }
@@ -197,6 +203,12 @@ void CStatusWindow::Hide() {
   if (!_hwnd)
     return;
   ShowWindow(_hwnd, SW_HIDE);
+}
+
+void CStatusWindow::SetInputMethodActive(bool active) {
+  _inputMethodActive = active;
+  if (!active)
+    Hide();
 }
 
 void CStatusWindow::UpdateStatus(const InputStatus& status) {
@@ -569,6 +581,9 @@ LRESULT CStatusWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_TIMER:
       if (wParam == 1 && _hwnd) {
         static bool lastVisible = true;
+        if (_activeProfileCheck)
+          _inputMethodActive = _activeProfileCheck();
+
         HWND fg = GetForegroundWindow();
         DWORD fgPid = 0;
         if (fg)
@@ -576,11 +591,13 @@ LRESULT CStatusWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
         const bool isFg = (fgPid == GetCurrentProcessId());
         const bool vis = IsWindowVisible(_hwnd) != FALSE;
 
-        if (!isFg && vis) {
-          // 本进程失去前台：隐藏
+        if ((!isFg || !_inputMethodActive || !g_config.showStatusBar) &&
+            vis) {
+          // 失去前台、极达输入法未激活或用户关闭状态栏时隐藏
           ShowWindow(_hwnd, SW_HIDE);
-        } else if (isFg && !vis && g_config.showStatusBar) {
-          // 本进程取得前台且用户希望显示：显示
+        } else if (isFg && _inputMethodActive && !vis &&
+                   g_config.showStatusBar) {
+          // 本进程位于前台且极达输入法激活时显示
           ShowWindow(_hwnd, SW_SHOWNOACTIVATE);
         }
 

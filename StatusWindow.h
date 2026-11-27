@@ -25,6 +25,7 @@ struct InputStatus {
 class CStatusWindow final {
  public:
   using CommandHandler = std::function<void(StatusCommand)>;
+  using ActiveProfileCheck = std::function<bool()>;
 
   CStatusWindow() = default;
   ~CStatusWindow();
@@ -40,12 +41,14 @@ class CStatusWindow final {
               const wchar_t* imeName,
               const InputStatus& initialStatus,
               CommandHandler handler,
+              ActiveProfileCheck activeProfileCheck = {},
               int x = CW_USEDEFAULT,
               int y = CW_USEDEFAULT);
 
   void Destroy();
   void Show();
   void Hide();
+  void SetInputMethodActive(bool active);
   bool IsVisible() const;
 
   // Update visual state from CTextService. This does not invoke the handler.
@@ -96,6 +99,8 @@ class CStatusWindow final {
   int _pressedButton = -1;
   bool _trackingMouse = false;
   bool _created = false;
+  bool _inputMethodActive = true;
+  ActiveProfileCheck _activeProfileCheck;
 
   HWND _tooltip = nullptr;
   void _RebuildTooltips();

@@ -92,6 +92,8 @@ STDMETHODIMP CJiDaTextService::QueryInterface(REFIID riid, void** ppv) {
     *ppv = static_cast<ITfKeyEventSink*>(this);
   else if (riid == IID_ITfThreadMgrEventSink)
     *ppv = static_cast<ITfThreadMgrEventSink*>(this);
+  else if (riid == IID_ITfActiveLanguageProfileNotifySink)
+    *ppv = static_cast<ITfActiveLanguageProfileNotifySink*>(this);
   else
     return E_NOINTERFACE;
   AddRef();
@@ -116,6 +118,15 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
   _threadMgr = ptim;
   _threadMgr->AddRef();
   _clientId = tid;
+
+  HRESULT hrProfileMgr = CoCreateInstance(
+      CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+      IID_ITfInputProcessorProfileMgr, reinterpret_cast<void**>(&_profileMgr));
+  if (FAILED(hrProfileMgr)) {
+    _profileMgr = nullptr;
+    OutputDebugStringW(
+        L"[JiDa] Activate: input processor profile manager creation FAILED\n");
+  }
 
   EnablePerMonitorV2();
 
@@ -146,6 +157,15 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     if (FAILED(hrSink)) {
       OutputDebugStringW(L"[JiDa] Activate: AdviseSink FAILED\n");
       _sinkCookie = TF_INVALID_COOKIE;
+    }
+    hrSink = source->AdviseSink(
+        IID_ITfActiveLanguageProfileNotifySink,
+        static_cast<ITfActiveLanguageProfileNotifySink*>(this),
+        &_profileSinkCookie);
+    if (FAILED(hrSink)) {
+      OutputDebugStringW(
+          L"[JiDa] Activate: active language profile AdviseSink FAILED\n");
+      _profileSinkCookie = TF_INVALID_COOKIE;
     }
     source->Release();
   }
@@ -190,7 +210,8 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
 
   bool statusCreated =
       _statusWnd->Create(g_hInstance, nullptr, L"极达", _status,
-                         [this](StatusCommand cmd) { _OnStatusCommand(cmd); });
+                         [this](StatusCommand cmd) { _OnStatusCommand(cmd); },
+                         [this]() { return _IsJiDaActiveProfile(); });
 
   if (!statusCreated) {
     OutputDebugStringW(L"[JiDa] Activate: status window create FAILED\n");
@@ -233,6 +254,15 @@ STDMETHODIMP CJiDaTextService::Deactivate() {
       }
       _sinkCookie = TF_INVALID_COOKIE;
     }
+    if (_profileSinkCookie != TF_INVALID_COOKIE) {
+      ITfSource* source = nullptr;
+      if (SUCCEEDED(
+              _threadMgr->QueryInterface(IID_ITfSource, (void**)&source))) {
+        source->UnadviseSink(_profileSinkCookie);
+        source->Release();
+      }
+      _profileSinkCookie = TF_INVALID_COOKIE;
+    }
 
     _threadMgr->Release();
     _threadMgr = nullptr;
@@ -245,6 +275,10 @@ STDMETHODIMP CJiDaTextService::Deactivate() {
   if (_statusWnd) {
     _statusWnd->Destroy();
     _statusWnd.reset();
+  }
+  if (_profileMgr) {
+    _profileMgr->Release();
+    _profileMgr = nullptr;
   }
 
   if (_activeCtx) {
@@ -1142,6 +1176,42 @@ STDMETHODIMP CJiDaTextService::OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) {
     _tempEnglishBuffer.clear();
   }
   return S_OK;
+}
+
+STDMETHODIMP CJiDaTextService::OnActivated(REFCLSID clsid,
+                                           REFGUID profile,
+                                           BOOL activated) {
+  if (!_statusWnd)
+    return S_OK;
+
+  if (IsEqualCLSID(clsid, CLSID_JiDaTSF) &&
+      IsEqualGUID(profile, GUID_JiDa_LBI)) {
+    _statusWnd->SetInputMethodActive(activated != FALSE);
+  } else if (activated) {
+    _statusWnd->SetInputMethodActive(false);
+  }
+  return S_OK;
+}
+
+bool CJiDaTextService::_IsJiDaActiveProfile() {
+  if (!_profileMgr)
+    return false;
+
+  TF_INPUTPROCESSORPROFILE profile{};
+  const HRESULT hr =
+      _profileMgr->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &profile);
+  if (FAILED(hr)) {
+    if (!_profileQueryFailureLogged) {
+      OutputDebugStringW(
+          L"[JiDa] StatusBar: GetActiveProfile failed; hiding status bar\n");
+      _profileQueryFailureLogged = true;
+    }
+    return false;
+  }
+
+  _profileQueryFailureLogged = false;
+  return hr == S_OK && IsEqualCLSID(profile.clsid, CLSID_JiDaTSF) &&
+         IsEqualGUID(profile.guidProfile, GUID_JiDa_LBI);
 }
 
 void CJiDaTextService::_OnStatusCommand(StatusCommand cmd) {

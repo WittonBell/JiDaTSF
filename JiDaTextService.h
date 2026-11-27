@@ -10,7 +10,8 @@
 
 class CJiDaTextService : public ITfTextInputProcessor,
                          public ITfKeyEventSink,
-                         public ITfThreadMgrEventSink {
+                         public ITfThreadMgrEventSink,
+                         public ITfActiveLanguageProfileNotifySink {
  public:
   CJiDaTextService();
   STDMETHODIMP QueryInterface(REFIID, void**) override;
@@ -35,6 +36,7 @@ class CJiDaTextService : public ITfTextInputProcessor,
   STDMETHODIMP OnSetFocus(ITfDocumentMgr*, ITfDocumentMgr*) override;
   STDMETHODIMP OnPushContext(ITfContext*) override { return S_OK; }
   STDMETHODIMP OnPopContext(ITfContext*) override { return S_OK; }
+  STDMETHODIMP OnActivated(REFCLSID, REFGUID, BOOL) override;
 
  private:
   ~CJiDaTextService();
@@ -56,6 +58,7 @@ class CJiDaTextService : public ITfTextInputProcessor,
   ITfThreadMgr* _threadMgr = nullptr;
   TfClientId _clientId = TF_CLIENTID_NULL;
   DWORD _sinkCookie = TF_INVALID_COOKIE;
+  DWORD _profileSinkCookie = TF_INVALID_COOKIE;
   ITfComposition* _composition = nullptr;
 
   JiDaEngine _engine;
@@ -66,8 +69,11 @@ class CJiDaTextService : public ITfTextInputProcessor,
   void _OnStatusCommand(StatusCommand cmd);
   void _OpenSettingsWindow();
   void _SyncStatusBarVisibility();
+  bool _IsJiDaActiveProfile();
 
   std::unique_ptr<CStatusWindow> _statusWnd;
+  ITfInputProcessorProfileMgr* _profileMgr = nullptr;
+  bool _profileQueryFailureLogged = false;
   InputStatus _status;
   std::unique_ptr<CPhraseWindow> _phraseWnd;
   void _ShowPhraseWindow(ITfContext* pic);
