@@ -1,29 +1,111 @@
 #include "Config.h"
+#include <algorithm>
 #include <shlobj.h>
 #include "Globals.h"
 #pragma comment(lib, "shell32.lib")
 
-std::wstring GetJiDaConfigDir() {
-  PWSTR path = nullptr;
-  std::wstring dir;
-  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_CREATE,
-                                     nullptr, &path))) {
-    dir = path;
-    CoTaskMemFree(path);
-  } else {
-    wchar_t buf[MAX_PATH] = {0};
-    GetEnvironmentVariableW(L"APPDATA", buf, MAX_PATH);
-    dir = buf;
+namespace {
+void LogConfigError(const wchar_t* operation, DWORD error) {
+  wchar_t message[256];
+  swprintf_s(message, L"[JiDa] %ls failed (error %lu)\n", operation, error);
+  OutputDebugStringW(message);
+}
+
+void WriteProfileString(const wchar_t* section,
+                        const wchar_t* key,
+                        const wchar_t* value,
+                        const wchar_t* path) {
+  if (!WritePrivateProfileStringW(section, key, value, path))
+    LogConfigError(L"WritePrivateProfileStringW", GetLastError());
+}
+
+void MigrateLegacyConfigFile(const std::wstring& legacyDir,
+                             const std::wstring& configDir,
+                             const wchar_t* fileName) {
+  std::wstring source = legacyDir + L"\\" + fileName;
+  std::wstring destination = configDir + L"\\" + fileName;
+  if (GetFileAttributesW(destination.c_str()) != INVALID_FILE_ATTRIBUTES ||
+      GetFileAttributesW(source.c_str()) == INVALID_FILE_ATTRIBUTES)
+    return;
+
+  if (!CopyFileW(source.c_str(), destination.c_str(), TRUE)) {
+    DWORD error = GetLastError();
+    if (error != ERROR_FILE_EXISTS && error != ERROR_ALREADY_EXISTS)
+      LogConfigError(L"CopyFileW", error);
   }
-  dir += L"\\JiDaTSF";
-  CreateDirectoryW(dir.c_str(), nullptr);
+}
+}  // namespace
+
+std::wstring GetJiDaConfigDir() {
+  if (!g_hInstance) {
+    LogConfigError(L"GetModuleFileNameW", ERROR_INVALID_HANDLE);
+    return L"";
+  }
+
+  std::vector<wchar_t> modulePath(512);
+  DWORD length = 0;
+  for (;;) {
+    SetLastError(ERROR_SUCCESS);
+    length = GetModuleFileNameW(g_hInstance, modulePath.data(),
+                                static_cast<DWORD>(modulePath.size()));
+    if (!length) {
+      LogConfigError(L"GetModuleFileNameW", GetLastError());
+      return L"";
+    }
+    if (length < modulePath.size())
+      break;
+    if (modulePath.size() >= 32768) {
+      LogConfigError(L"GetModuleFileNameW", ERROR_INSUFFICIENT_BUFFER);
+      return L"";
+    }
+    modulePath.resize((std::min)(modulePath.size() * 2, size_t{32768}));
+  }
+
+  std::wstring dir(modulePath.data(), length);
+  size_t slash = dir.find_last_of(L"\\/");
+  if (slash == std::wstring::npos) {
+    LogConfigError(L"Resolve DLL directory", ERROR_INVALID_NAME);
+    return L"";
+  }
+  dir.resize(slash);
+  dir += L"\\conf";
+
+  DWORD attributes = GetFileAttributesW(dir.c_str());
+  if (attributes == INVALID_FILE_ATTRIBUTES) {
+    if (!CreateDirectoryW(dir.c_str(), nullptr) &&
+        GetLastError() != ERROR_ALREADY_EXISTS) {
+      LogConfigError(L"CreateDirectoryW", GetLastError());
+      return L"";
+    }
+    attributes = GetFileAttributesW(dir.c_str());
+  }
+  if (attributes == INVALID_FILE_ATTRIBUTES ||
+      !(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    LogConfigError(L"GetFileAttributesW",
+                   attributes == INVALID_FILE_ATTRIBUTES ? GetLastError()
+                                                          : ERROR_DIRECTORY);
+    return L"";
+  }
+
+  PWSTR appDataPath = nullptr;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr,
+                                     &appDataPath))) {
+    std::wstring legacyDir = appDataPath;
+    CoTaskMemFree(appDataPath);
+    legacyDir += L"\\JiDaTSF";
+    MigrateLegacyConfigFile(legacyDir, dir, L"config.ini");
+    MigrateLegacyConfigFile(legacyDir, dir, L"userdict.txt");
+  }
   return dir;
 }
 
 std::wstring GetJiDaConfigPath() {
   static std::wstring cached;
-  if (cached.empty())
-    cached = GetJiDaConfigDir() + L"\\config.ini";
+  if (cached.empty()) {
+    std::wstring dir = GetJiDaConfigDir();
+    if (!dir.empty())
+      cached = dir + L"\\config.ini";
+  }
   return cached;
 }
 
@@ -55,11 +137,10 @@ static COLORREF ReadColor(const wchar_t* sec,
 static void WriteInt(const wchar_t* sec, const wchar_t* key, int v) {
   wchar_t buf[32];
   swprintf_s(buf, L"%d", v);
-  WritePrivateProfileStringW(sec, key, buf, GetJiDaConfigPath().c_str());
+  WriteProfileString(sec, key, buf, GetJiDaConfigPath().c_str());
 }
 static void WriteBool(const wchar_t* sec, const wchar_t* key, bool v) {
-  WritePrivateProfileStringW(sec, key, v ? L"1" : L"0",
-                             GetJiDaConfigPath().c_str());
+  WriteProfileString(sec, key, v ? L"1" : L"0", GetJiDaConfigPath().c_str());
 }
 static void WriteColor(const wchar_t* sec, const wchar_t* key, COLORREF c) {
   WriteInt(sec, key, (int)c);
@@ -73,7 +154,7 @@ static void ReadStr(const wchar_t* sec,
                            GetJiDaConfigPath().c_str());
 }
 static void WriteStr(const wchar_t* sec, const wchar_t* key, const wchar_t* v) {
-  WritePrivateProfileStringW(sec, key, v, GetJiDaConfigPath().c_str());
+  WriteProfileString(sec, key, v, GetJiDaConfigPath().c_str());
 }
 static void ReadKeyMappings(const wchar_t* section,
                             std::map<UINT, KeyCharacterPair>& mappings) {
@@ -107,8 +188,9 @@ static void WriteKeyMappings(
 }
 
 void LoadJiDaConfig() {
-  if (GetFileAttributesW(GetJiDaConfigPath().c_str()) ==
-      INVALID_FILE_ATTRIBUTES)
+  std::wstring configPath = GetJiDaConfigPath();
+  if (configPath.empty() ||
+      GetFileAttributesW(configPath.c_str()) == INVALID_FILE_ATTRIBUTES)
     return;
 
   const wchar_t* in = L"Input";
@@ -175,6 +257,9 @@ void LoadJiDaConfig() {
 }
 
 void SaveJiDaConfig() {
+  if (GetJiDaConfigPath().empty())
+    return;
+
   const wchar_t* in = L"Input";
   WriteBool(in, L"ZWildcard", g_config.zWildcard);
   WriteBool(in, L"ZRepeat", g_config.zRepeat);
@@ -183,8 +268,7 @@ void SaveJiDaConfig() {
   WriteBool(in, L"PerKeyHint", g_config.perKeyHint);
   WriteInt(in, L"CharacterSetVersion",
            static_cast<int>(g_config.characterSetVersion));
-  WritePrivateProfileStringW(in, L"GbkExt", nullptr,
-                             GetJiDaConfigPath().c_str());
+  WriteProfileString(in, L"GbkExt", nullptr, GetJiDaConfigPath().c_str());
   WriteBool(in, L"InlinePreedit", g_config.inlinePreedit);
   WriteBool(in, L"ShiftDirectCommit", g_config.shiftDirectCommit);
   WriteInt(in, L"ChineseToggleShortcut",

@@ -442,7 +442,10 @@ bool LoadJiDaTable(const std::wstring& path) {
 // ---------- 用户词 ----------
 void LoadUserPhrases() {
   g_userPhrases.clear();
-  std::wstring path = GetJiDaConfigDir() + L"\\userdict.txt";
+  std::wstring configDir = GetJiDaConfigDir();
+  if (configDir.empty())
+    return;
+  std::wstring path = configDir + L"\\userdict.txt";
   FILE* fp = nullptr;
   if (_wfopen_s(&fp, path.c_str(), L"r, ccs=UTF-8") != 0 || !fp)
     return;
@@ -468,10 +471,17 @@ void LoadUserPhrases() {
 }
 
 void SaveUserPhrases() {
-  std::wstring path = GetJiDaConfigDir() + L"\\userdict.txt";
-  FILE* fp = nullptr;
-  if (_wfopen_s(&fp, path.c_str(), L"w, ccs=UTF-8") != 0 || !fp)
+  std::wstring configDir = GetJiDaConfigDir();
+  if (configDir.empty())
     return;
+  std::wstring path = configDir + L"\\userdict.txt";
+  FILE* fp = nullptr;
+  errno_t openError = _wfopen_s(&fp, path.c_str(), L"w, ccs=UTF-8");
+  if (openError != 0 || !fp) {
+    OutputDebugStringW(
+        L"[JiDa] Unable to save user dictionary in DLL conf directory\n");
+    return;
+  }
   fwprintf(fp, L"# JiDaTSF user dictionary\n");
   for (auto& up : g_userPhrases) {
     fwprintf(fp, L"%ls\t%ls\n", up.code.c_str(), up.text.c_str());

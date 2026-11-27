@@ -161,7 +161,7 @@ struct JiDaConfig {
 };
 ```
 
-可通过输入法设置窗口的“字库版本”分类选择字符集标准。当前只加载现有极点 GBK 词库：GB2312 会过滤码表中以 `~` 标记的扩展字词，GBK 及两个 GB18030 选项暂使用相同词库；以后加入对应版本的词库文件时，再按所选版本组合加载。配置保存到 `%APPDATA%\JiDaTSF\config.ini`；旧版 `GbkExt` 配置会自动迁移。
+可通过输入法设置窗口的“字库版本”分类选择字符集标准。当前只加载现有极点 GBK 词库：GB2312 会过滤码表中以 `~` 标记的扩展字词，GBK 及两个 GB18030 选项暂使用相同词库；以后加入对应版本的词库文件时，再按所选版本组合加载。配置和用户词典保存在 DLL 同目录的 `conf` 文件夹；首次启动时会将旧 `%APPDATA%\JiDaTSF` 中的 `config.ini` 和 `userdict.txt` 复制到该目录（不会覆盖已有文件）。旧版 `GbkExt` 配置会自动迁移。
 
 设置窗口左侧按输入选项、字库版本、候选列表、外观、状态栏和设置快捷键分类，右侧编辑对应内容。快捷键页可配置中英文切换键；定义软键盘和自定义标点页共用可点击的虚拟键盘，键帽左侧以灰色显示正常与上档键位符，右侧显示对应字符，上档在上、正常在下；自定义值显示在对应位置，并沿用上档字符和正常字符的颜色。键位符、正常字符和上档字符的显示颜色可在虚拟键盘下方设置。点击“确定”后保存；“取消”不会应用未保存的修改，“恢复默认”会将当前编辑内容重置为默认值。
 
@@ -216,7 +216,7 @@ CCandidateWindow::Show
 | 简繁转换 | `_CommitAndEnd` 提交前做字符映射 |
 | 皮肤 | `CCandidateWindow::_OnPaint` 自绘 + `SetLayeredWindowAttributes` |
 | 竖排候选 | `CCandidateWindow::_UpdateSize` + `_OnPaint` 布局 |
-| 配置持久化 | 在 `DllMain` 中读取 `%APPDATA%\JiDaTSF\config.ini` 覆盖 `g_config` |
+| 配置持久化 | 在 `DllMain` 中读取 DLL 同目录 `conf\config.ini` 覆盖 `g_config` |
 | 更多分号规则 | `JiDaEngine::OnSemicolonTail` 中增加分支 |
 
 ---
