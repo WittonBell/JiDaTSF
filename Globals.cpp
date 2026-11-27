@@ -38,7 +38,7 @@ JiDaConfig g_config;
 static std::wstring s_tablePath;
 static std::atomic<bool> s_tableLoaded{false};
 static std::atomic<bool> s_tableLoading{false};
-static constexpr uint32_t kDictionaryCacheVersion = 1;
+static constexpr uint32_t kDictionaryCacheVersion = 2;
 
 static bool ReadCacheValue(FILE* fp, void* value, size_t size) {
   return fread(value, 1, size, fp) == size;
@@ -102,8 +102,10 @@ static bool LoadJiDaTableCacheFile(const std::wstring& path) {
   entries.reserve(entryCount);
   for (uint32_t i = 0; i < entryCount; ++i) {
     uint32_t codeLength = 0, wordLength = 0;
+    uint8_t isGbkExt = 0;
     if (!ReadCacheValue(fp, &codeLength, sizeof(codeLength)) ||
         !ReadCacheValue(fp, &wordLength, sizeof(wordLength)) ||
+        !ReadCacheValue(fp, &isGbkExt, sizeof(isGbkExt)) || isGbkExt > 1 ||
         codeLength == 0 || codeLength > 4 || wordLength == 0 ||
         wordLength > 8192) {
       valid = false;
@@ -121,6 +123,7 @@ static bool LoadJiDaTableCacheFile(const std::wstring& path) {
       break;
     }
     entry.level = static_cast<int>(codeLength) - 1;
+    entry.isGbkExt = isGbkExt != 0;
     entries.push_back(std::move(entry));
   }
   if (valid && fgetc(fp) != EOF)
@@ -277,10 +280,12 @@ static void ParseJiDaFormat(FILE* fp, std::vector<WubiEntry>& entries) {
 
     for (size_t i = 1; i < tokens.size(); ++i) {
       std::wstring word = tokens[i];
+      bool isGbkExt = !word.empty() && word[0] == L'~';
       StripEntryPrefix(word);
       if (word.empty())
         continue;
-      entries.push_back(WubiEntry{code, word, (int)code.size() - 1});
+      entries.push_back(
+          WubiEntry{code, word, (int)code.size() - 1, isGbkExt});
     }
   }
 }
@@ -305,7 +310,7 @@ static void ParseSimpleFormat(FILE* fp, std::vector<WubiEntry>& entries) {
       continue;
     for (auto& ch : code)
       ch = towlower(ch);
-    entries.push_back(WubiEntry{code, word, (int)code.size() - 1});
+    entries.push_back(WubiEntry{code, word, (int)code.size() - 1, false});
   }
 }
 

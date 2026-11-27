@@ -17,6 +17,7 @@ struct WubiEntry {
   std::wstring code;
   std::wstring word;
   int level;
+  bool isGbkExt = false;
 };
 
 struct TrieNode {

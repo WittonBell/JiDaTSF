@@ -84,10 +84,15 @@ foreach ($originalLine in $lines) {
             continue
         }
         for ($i = 1; $i -lt $tokens.Count; $i++) {
-            $word = Remove-EntryPrefix $tokens[$i].Value
+            $token = $tokens[$i].Value
+            $isGbkExt = $token.StartsWith('~')
+            $word = Remove-EntryPrefix $token
             if ($word.Length -gt 0) {
-                $entries.Add([pscustomobject]@{ Code = $code; Word = $word }) |
-                    Out-Null
+                $entries.Add([pscustomobject]@{
+                    Code = $code
+                    Word = $word
+                    IsGbkExt = $isGbkExt
+                }) | Out-Null
             }
         }
     } else {
@@ -104,8 +109,11 @@ foreach ($originalLine in $lines) {
             $code.Length -gt 4) {
             continue
         }
-        $entries.Add([pscustomobject]@{ Code = $code; Word = $word }) |
-            Out-Null
+        $entries.Add([pscustomobject]@{
+            Code = $code
+            Word = $word
+            IsGbkExt = $false
+        }) | Out-Null
     }
 }
 
@@ -125,7 +133,7 @@ try {
         [System.IO.FileShare]::None)
     $writer = New-Object System.IO.BinaryWriter($stream)
     $writer.Write([System.Text.Encoding]::ASCII.GetBytes('JDTC'))
-    $writer.Write([uint32]1)
+    $writer.Write([uint32]2)
     $writer.Write([uint64]$sourceInfo.Length)
     $writer.Write([uint64]$sourceInfo.LastWriteTimeUtc.ToFileTime())
     $writer.Write([uint16][int]$wildcardChar)
@@ -133,6 +141,11 @@ try {
     foreach ($entry in $entries) {
         $writer.Write([uint32]$entry.Code.Length)
         $writer.Write([uint32]$entry.Word.Length)
+        if ($entry.IsGbkExt) {
+            $writer.Write([byte]1)
+        } else {
+            $writer.Write([byte]0)
+        }
         $writer.Write($encoding.GetBytes($entry.Code))
         $writer.Write($encoding.GetBytes($entry.Word))
     }

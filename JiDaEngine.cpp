@@ -86,6 +86,8 @@ void JiDaEngine::Query(const std::wstring& code) {
   auto appendSubtree = [&](auto&& self, int node) -> bool {
     for (int idx : g_trie[node].ownEntries) {
       auto& entry = g_entries[idx];
+      if (!g_config.gbkExt && entry.isGbkExt)
+        continue;
       if (seen.insert(std::wstring_view(entry.word)).second) {
         candidates_.push_back({entry.word, entry.code});
         if ((int)candidates_.size() >= kMaxCandidates)
