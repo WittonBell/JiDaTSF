@@ -1,24 +1,33 @@
-// SettingWindow.cpp
 #include "SettingWindow.h"
-#include <string>
+#include <commctrl.h>
+#include <commdlg.h>
 #include "Config.h"
-#include "Globals.h"
 
-// 只允许单实例
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "comdlg32.lib")
+
 static CSettingWindow* s_SettingInstance = nullptr;
 
 namespace {
-enum : int {
+enum PageId {
+  PAGE_INPUT = 1,
+  PAGE_CANDIDATES,
+  PAGE_APPEARANCE,
+  PAGE_STATUS
+};
+
+enum ControlId {
   ID_Z_WILDCARD = 1001,
   ID_Z_REPEAT,
   ID_SEMI_SECOND,
   ID_PUNCT_TOP,
   ID_PERKEY_HINT,
+  ID_GBK_EXT,
   ID_INLINE_PREEDIT,
+  ID_SHIFT_DIRECT,
   ID_RAD_VERTICAL,
   ID_RAD_HORIZONTAL,
   ID_CBO_PAGESIZE,
-  ID_CBO_FONTSIZE,
   ID_SHOW_STATUS,
   ID_BTN_RESET,
   ID_BTN_OK,
@@ -26,10 +35,64 @@ enum : int {
   ID_BTN_FONT,
   ID_BTN_TEXTCLR,
   ID_BTN_BGCLR,
-  ID_BTN_SELCLR,
-  ID_CHK_SHIFT_DIRECT
+  ID_BTN_SELCLR
 };
+
 constexpr wchar_t kClass[] = L"JiDa.SettingWindow";
+constexpr wchar_t kPageClass[] = L"JiDa.SettingPage";
+constexpr int kClientWidth = 780;
+constexpr int kClientHeight = 530;
+
+struct SettingCategory {
+  const wchar_t* name;
+  int parentIndex;
+  int pageId;
+};
+
+constexpr SettingCategory kCategories[] = {
+    {L"输入法", -1, 0},
+    {L"候选窗口", -1, 0},
+    {L"输入选项", 0, PAGE_INPUT},
+    {L"候选列表", 1, PAGE_CANDIDATES},
+    {L"外观", 1, PAGE_APPEARANCE},
+    {L"状态栏", -1, PAGE_STATUS},
+};
+
+void SetCheck(HWND control, bool value) {
+  SendMessageW(control, BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+bool IsChecked(HWND control) {
+  return SendMessageW(control, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+HTREEITEM InsertTreeItem(HWND tree,
+                         HTREEITEM parent,
+                         const wchar_t* text,
+                         int pageId) {
+  TVINSERTSTRUCTW insert = {};
+  insert.hParent = parent;
+  insert.hInsertAfter = TVI_LAST;
+  insert.item.mask = TVIF_TEXT | TVIF_PARAM;
+  insert.item.pszText = const_cast<LPWSTR>(text);
+  insert.item.lParam = pageId;
+  return TreeView_InsertItem(tree, &insert);
+}
+
+HTREEITEM FindFirstPageItem(HWND tree, HTREEITEM item) {
+  while (item) {
+    TVITEMW data = {};
+    data.mask = TVIF_PARAM;
+    data.hItem = item;
+    if (TreeView_GetItem(tree, &data) && data.lParam != 0)
+      return item;
+    HTREEITEM page = FindFirstPageItem(tree, TreeView_GetChild(tree, item));
+    if (page)
+      return page;
+    item = TreeView_GetNextSibling(tree, item);
+  }
+  return nullptr;
+}
 }  // namespace
 
 CSettingWindow::CSettingWindow(HINSTANCE inst, HWND owner, ChangeCallback cb)
@@ -70,6 +133,10 @@ void CSettingWindow::Show(HINSTANCE inst, HWND owner, ChangeCallback onChange) {
 }
 
 bool CSettingWindow::_Create() {
+  INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_TREEVIEW_CLASSES};
+  if (!InitCommonControlsEx(&controls))
+    return false;
+
   WNDCLASSEXW wc = {sizeof(wc)};
   wc.lpfnWndProc = _WndProc;
   wc.hInstance = _instance;
@@ -78,12 +145,20 @@ bool CSettingWindow::_Create() {
   wc.lpszClassName = kClass;
   RegisterClassExW(&wc);
 
-  RECT rc = {0, 0, _S(360), _S(385)};
-  AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU | WS_POPUP, FALSE, 0);
+  WNDCLASSEXW pageClass = {sizeof(pageClass)};
+  pageClass.lpfnWndProc = _PageWndProc;
+  pageClass.hInstance = _instance;
+  pageClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  pageClass.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+  pageClass.lpszClassName = kPageClass;
+  RegisterClassExW(&pageClass);
+
+  RECT rc = {0, 0, _S(kClientWidth), _S(kClientHeight)};
+  DWORD style = WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_CLIPCHILDREN;
+  AdjustWindowRectEx(&rc, style, FALSE, 0);
   int winW = rc.right - rc.left;
   int winH = rc.bottom - rc.top;
 
-  // 目标显示器：owner 所在屏 → 前台窗口 → 主屏
   HWND refWnd = _owner ? _owner : GetForegroundWindow();
   HMONITOR hmon =
       refWnd ? MonitorFromWindow(refWnd, MONITOR_DEFAULTTONEAREST) : nullptr;
@@ -92,33 +167,15 @@ bool CSettingWindow::_Create() {
 
   MONITORINFO mi{sizeof(mi)};
   GetMonitorInfoW(hmon, &mi);
-
   int workW = mi.rcWork.right - mi.rcWork.left;
   int workH = mi.rcWork.bottom - mi.rcWork.top;
-
-  // 若 work area 装不下，压缩窗口尺寸（内容自适应会被裁，但至少能看到）
-  if (winH > workH)
-    winH = workH;
-  if (winW > workW)
-    winW = workW;
-
-  // 居中于 work area，而不是居中于 owner（owner 在右下角时会跑出屏幕）
+  winW = min(winW, workW);
+  winH = min(winH, workH);
   int x = mi.rcWork.left + (workW - winW) / 2;
   int y = mi.rcWork.top + (workH - winH) / 2;
 
-  // 兜底
-  if (x < mi.rcWork.left)
-    x = mi.rcWork.left;
-  if (y < mi.rcWork.top)
-    y = mi.rcWork.top;
-  if (x + winW > mi.rcWork.right)
-    x = mi.rcWork.right - winW;
-  if (y + winH > mi.rcWork.bottom)
-    y = mi.rcWork.bottom - winH;
-
-  _hwnd = CreateWindowExW(0, kClass, L"极达五笔 - 设置",
-                          WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, winW, winH,
-                          _owner, nullptr, _instance, this);
+  _hwnd = CreateWindowExW(0, kClass, L"极达五笔 - 设置", style, x, y, winW,
+                          winH, _owner, nullptr, _instance, this);
   if (!_hwnd)
     return false;
 
@@ -129,24 +186,17 @@ bool CSettingWindow::_Create() {
   return true;
 }
 
-HWND CSettingWindow::_MkGroup(const wchar_t* text, int x, int y, int w, int h) {
-  return CreateWindowExW(0, L"BUTTON", text,
-                         WS_CHILD | WS_VISIBLE | BS_GROUPBOX, _S(x), _S(y),
-                         _S(w), _S(h), _hwnd, nullptr, _instance, nullptr);
-}
-
 HWND CSettingWindow::_MkCheck(const wchar_t* text,
                               int x,
                               int y,
                               int w,
-                              int id,
-                              bool checked) {
-  HWND h = CreateWindowExW(0, L"BUTTON", text,
-                           WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP,
-                           _S(x), _S(y), _S(w), _S(20), _hwnd,
-                           (HMENU)(INT_PTR)id, _instance, nullptr);
-  SendMessageW(h, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
-  return h;
+                              int id) {
+  HWND control = CreateWindowExW(
+      0, L"BUTTON", text,
+      WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP, _S(x), _S(y),
+      _S(w), _S(24), _controlParent, (HMENU)(INT_PTR)id, _instance, nullptr);
+  SendMessageW(control, WM_SETFONT, (WPARAM)_font, TRUE);
+  return control;
 }
 
 HWND CSettingWindow::_MkRadio(const wchar_t* text,
@@ -154,23 +204,28 @@ HWND CSettingWindow::_MkRadio(const wchar_t* text,
                               int y,
                               int w,
                               int id,
-                              bool checked,
                               bool firstInGroup) {
   DWORD style = WS_CHILD | WS_VISIBLE | BS_AUTORADIOBUTTON;
   if (firstInGroup)
     style |= WS_GROUP | WS_TABSTOP;
-
-  HWND h =
-      CreateWindowExW(0, L"BUTTON", text, style, _S(x), _S(y), _S(w), _S(20),
-                      _hwnd, (HMENU)(INT_PTR)id, _instance, nullptr);
-  SendMessageW(h, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
-  return h;
+  HWND control = CreateWindowExW(0, L"BUTTON", text, style, _S(x), _S(y), _S(w),
+                                 _S(24), _controlParent, (HMENU)(INT_PTR)id,
+                                 _instance, nullptr);
+  SendMessageW(control, WM_SETFONT, (WPARAM)_font, TRUE);
+  return control;
 }
 
-HWND CSettingWindow::_MkLabel(const wchar_t* text, int x, int y, int w, int h) {
-  return CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
-                         _S(x), _S(y), _S(w), _S(h), _hwnd, nullptr, _instance,
-                         nullptr);
+HWND CSettingWindow::_MkLabel(const wchar_t* text,
+                              int x,
+                              int y,
+                              int w,
+                              int h) {
+  HWND control = CreateWindowExW(0, L"STATIC", text,
+                                 WS_CHILD | WS_VISIBLE | SS_LEFT, _S(x), _S(y),
+                                 _S(w), _S(h), _controlParent, nullptr,
+                                 _instance, nullptr);
+  SendMessageW(control, WM_SETFONT, (WPARAM)_font, TRUE);
+  return control;
 }
 
 HWND CSettingWindow::_MkButton(const wchar_t* text,
@@ -179,166 +234,222 @@ HWND CSettingWindow::_MkButton(const wchar_t* text,
                                int w,
                                int h,
                                int id) {
-  return CreateWindowExW(0, L"BUTTON", text,
-                         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
-                         _S(x), _S(y), _S(w), _S(h), _hwnd, (HMENU)(INT_PTR)id,
-                         _instance, nullptr);
+  HWND control = CreateWindowExW(
+      0, L"BUTTON", text,
+      WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP, _S(x), _S(y), _S(w),
+      _S(h), _controlParent, (HMENU)(INT_PTR)id, _instance, nullptr);
+  SendMessageW(control, WM_SETFONT, (WPARAM)_font, TRUE);
+  return control;
+}
+
+HWND CSettingWindow::_MkColorButton(int x, int y, int w, int h, int id) {
+  HWND control = CreateWindowExW(
+      0, L"BUTTON", L"",
+      WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_TABSTOP, _S(x), _S(y), _S(w),
+      _S(h), _controlParent, (HMENU)(INT_PTR)id, _instance, nullptr);
+  SendMessageW(control, WM_SETFONT, (WPARAM)_font, TRUE);
+  return control;
 }
 
 HWND CSettingWindow::_MkCombo(int x, int y, int w, int h, int id) {
-  return CreateWindowExW(
+  HWND control = CreateWindowExW(
       0, L"COMBOBOX", L"",
       WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, _S(x),
-      _S(y), _S(w), _S(h), _hwnd, (HMENU)(INT_PTR)id, _instance, nullptr);
+      _S(y), _S(w), _S(h), _controlParent, (HMENU)(INT_PTR)id, _instance,
+      nullptr);
+  SendMessageW(control, WM_SETFONT, (WPARAM)_font, TRUE);
+  return control;
 }
 
 void CSettingWindow::_Layout() {
-  if (_font)
-    DeleteObject(_font);
   _font = CreateFontW(-_S(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                       CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
 
-  // ===== 输入选项 =====
-  HWND g1 = _MkGroup(L"输入选项", 10, 10, 340, 125);
-  _chkZWildcard = _MkCheck(L"Z 键通配", 22, 32, 150, ID_Z_WILDCARD, true);
-  _chkZRepeat = _MkCheck(L"Z 键重复上次", 22, 56, 150, ID_Z_REPEAT, true);
-  _chkPunctTop = _MkCheck(L"标点顶字上屏", 22, 80, 150, ID_PUNCT_TOP, true);
-  _chkSemiSecond =
-      _MkCheck(L"分号选第二重码", 22, 104, 150, ID_SEMI_SECOND, true);
-  _chkPerKey = _MkCheck(L"逐键提示", 185, 32, 150, ID_PERKEY_HINT, true);
-  _chkInline = _MkCheck(L"嵌入预编辑", 185, 56, 150, ID_INLINE_PREEDIT, false);
-  _chkShiftDirect =
-      _MkCheck(L"Shift 直接上屏", 185, 80, 150, ID_CHK_SHIFT_DIRECT, true);
+  _tree = CreateWindowExW(
+      WS_EX_CLIENTEDGE, WC_TREEVIEWW, L"",
+      WS_CHILD | WS_VISIBLE | WS_TABSTOP | TVS_HASBUTTONS | TVS_HASLINES |
+          TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_NOHSCROLL,
+      _S(12), _S(14), _S(170), _S(456), _hwnd, nullptr, _instance, nullptr);
+  SendMessageW(_tree, WM_SETFONT, (WPARAM)_font, TRUE);
 
-  // ===== 显示选项 =====
-  HWND g2 = _MkGroup(L"显示选项", 10, 145, 340, 140);
-  _radVert = _MkRadio(L"竖向候选", 22, 165, 90, ID_RAD_VERTICAL, true, true);
-  _radHorz =
-      _MkRadio(L"横向候选", 120, 165, 90, ID_RAD_HORIZONTAL, false, false);
+  _controlParent = _hwnd;
+  HWND reset = _MkButton(L"恢复默认(&R)", 16, 488, 112, 28, ID_BTN_RESET);
+  HWND cancel = _MkButton(L"取消(&C)", 580, 488, 88, 28, ID_BTN_CANCEL);
+  HWND ok = _MkButton(L"确定(&O)", 680, 488, 88, 28, ID_BTN_OK);
 
-  HWND l1 = _MkLabel(L"每页候选数", 22, 195, 80, 20);
-  _cboPage = _MkCombo(110, 193, 60, 190, ID_CBO_PAGESIZE);
-  for (int v = 3; v <= 9; ++v) {
-    wchar_t buf[4];
-    swprintf_s(buf, L"%d", v);
-    SendMessageW(_cboPage, CB_ADDSTRING, 0, (LPARAM)buf);
+  HTREEITEM categoryItems[sizeof(kCategories) / sizeof(kCategories[0])] = {};
+  int firstPageIndex = -1;
+  for (size_t i = 0; i < sizeof(kCategories) / sizeof(kCategories[0]); ++i) {
+    const SettingCategory& category = kCategories[i];
+    HTREEITEM parent = category.parentIndex >= 0
+                           ? categoryItems[category.parentIndex]
+                           : TVI_ROOT;
+    categoryItems[i] =
+        InsertTreeItem(_tree, parent, category.name, category.pageId);
+    if (category.pageId == 0) {
+      TreeView_Expand(_tree, categoryItems[i], TVE_EXPAND);
+      continue;
+    }
+    if (category.pageId == PAGE_INPUT)
+      firstPageIndex = (int)i;
+
+    HWND page = CreateWindowExW(
+        WS_EX_CONTROLPARENT, kPageClass, L"",
+        WS_CHILD | WS_CLIPCHILDREN, _S(198), _S(14), _S(570), _S(456), _hwnd,
+        nullptr, _instance, _hwnd);
+    SendMessageW(page, WM_SETFONT, (WPARAM)_font, TRUE);
+    _pages.push_back({category.pageId, page});
+    _controlParent = page;
+
+    switch (category.pageId) {
+      case PAGE_INPUT:
+        _MkLabel(L"输入选项", 22, 18, 500, 28);
+        _MkLabel(L"自定义五笔输入行为。", 22, 50, 500, 24);
+        _controls.chkZWildcard = _MkCheck(L"Z 键通配", 24, 106, 220, ID_Z_WILDCARD);
+        _controls.chkZRepeat = _MkCheck(L"Z 键重复上次上屏", 24, 142, 240, ID_Z_REPEAT);
+        _controls.chkSemiSecond =
+            _MkCheck(L"分号选第二重码", 24, 178, 240, ID_SEMI_SECOND);
+        _controls.chkPunctTop =
+            _MkCheck(L"标点顶字上屏", 24, 214, 240, ID_PUNCT_TOP);
+        _controls.chkPerKey = _MkCheck(L"逐键提示", 292, 106, 220, ID_PERKEY_HINT);
+        _controls.chkGbkExt = _MkCheck(L"GBK 生僻字", 292, 142, 220, ID_GBK_EXT);
+        _controls.chkInline = _MkCheck(L"嵌入预编辑", 292, 178, 220, ID_INLINE_PREEDIT);
+        _controls.chkShiftDirect =
+            _MkCheck(L"Shift 直接上屏", 292, 214, 240, ID_SHIFT_DIRECT);
+        break;
+
+      case PAGE_CANDIDATES: {
+        _MkLabel(L"候选列表", 22, 18, 500, 28);
+        _MkLabel(L"设置候选窗口的排列方式和每页候选数量。", 22, 50, 520, 24);
+        _controls.radVert =
+            _MkRadio(L"竖向排列", 24, 108, 120, ID_RAD_VERTICAL, true);
+        _controls.radHorz =
+            _MkRadio(L"横向排列", 164, 108, 120, ID_RAD_HORIZONTAL);
+        _MkLabel(L"每页候选数", 24, 166, 120, 24);
+        _controls.cboPage = _MkCombo(144, 162, 90, 180, ID_CBO_PAGESIZE);
+        for (int value = 3; value <= 9; ++value) {
+          wchar_t text[4];
+          swprintf_s(text, L"%d", value);
+          SendMessageW(_controls.cboPage, CB_ADDSTRING, 0, (LPARAM)text);
+        }
+        break;
+      }
+
+      case PAGE_APPEARANCE:
+        _MkLabel(L"候选窗口外观", 22, 18, 500, 28);
+        _MkLabel(L"选择候选字体和窗口配色。", 22, 50, 520, 24);
+        _MkLabel(L"候选字体", 24, 108, 100, 26);
+        _controls.lblFont = _MkLabel(L"", 124, 108, 270, 26);
+        _controls.btnFont =
+            _MkButton(L"选择字体...", 410, 104, 120, 30, ID_BTN_FONT);
+        _MkLabel(L"候选文字颜色", 24, 166, 140, 24);
+        _MkLabel(L"窗口背景颜色", 204, 166, 140, 24);
+        _MkLabel(L"选中项背景颜色", 384, 166, 160, 24);
+        _controls.btnTextClr =
+            _MkColorButton(24, 194, 150, 34, ID_BTN_TEXTCLR);
+        _controls.btnBgClr =
+            _MkColorButton(204, 194, 150, 34, ID_BTN_BGCLR);
+        _controls.btnSelClr =
+            _MkColorButton(384, 194, 150, 34, ID_BTN_SELCLR);
+        break;
+
+      case PAGE_STATUS:
+        _MkLabel(L"状态栏", 22, 18, 500, 28);
+        _MkLabel(L"控制输入法状态栏的显示。", 22, 50, 520, 24);
+        _controls.chkShowBar =
+            _MkCheck(L"显示状态栏", 24, 108, 240, ID_SHOW_STATUS);
+        break;
+    }
   }
 
-  HWND l2 = _MkLabel(L"候选字体", 22, 223, 60, 20);
-  _lblFont = _MkLabel(L"", 100, 223, 120, 20);
-  _btnFont = _MkButton(L"选择字体...", 250, 218, 86, 24, ID_BTN_FONT);
+  SendMessageW(_tree, WM_SETFONT, (WPARAM)_font, TRUE);
+  SendMessageW(reset, WM_SETFONT, (WPARAM)_font, TRUE);
+  SendMessageW(cancel, WM_SETFONT, (WPARAM)_font, TRUE);
+  SendMessageW(ok, WM_SETFONT, (WPARAM)_font, TRUE);
+  _controlParent = nullptr;
 
-  _btnTextClr = _MkButton(L"文字色", 22, 250, 70, 24, ID_BTN_TEXTCLR);
-  _btnBgClr = _MkButton(L"背景色", 110, 250, 70, 24, ID_BTN_BGCLR);
-  _btnSelClr = _MkButton(L"高亮色", 198, 250, 70, 24, ID_BTN_SELCLR);
-
-  HWND g3 = _MkGroup(L"状态栏", 10, 295, 340, 44);
-  _chkShowBar = _MkCheck(L"显示状态栏", 22, 312, 150, ID_SHOW_STATUS, true);
-
-  _btnReset = _MkButton(L"恢复默认(&R)", 14, 346, 100, 26, ID_BTN_RESET);
-  _btnOk = _MkButton(L"确定(&O)", 245, 346, 100, 26, ID_BTN_OK);
-  _btnCancel = _MkButton(L"取消(&C)", 155, 346, 80, 26, ID_BTN_CANCEL);
-
-  // 统一字体
-  HWND all[] = {_chkZWildcard,
-                _chkZRepeat,
-                _chkSemiSecond,
-                _chkPunctTop,
-                _chkPerKey,
-                _chkInline,
-                _chkShiftDirect,
-                _chkShowBar,
-                _radVert,
-                _radHorz,
-                _cboPage,
-                _btnReset,
-                _btnOk,
-                _btnCancel,
-                _lblFont,
-                _btnFont,
-                _btnTextClr,
-                _btnBgClr,
-                _btnSelClr,
-                g1,
-                g2,
-                g3,
-                l1,
-                l2};
-  for (HWND h : all)
-    SendMessageW(h, WM_SETFONT, (WPARAM)_font, TRUE);
+  if (firstPageIndex >= 0)
+    TreeView_SelectItem(_tree, categoryItems[firstPageIndex]);
 }
 
 void CSettingWindow::_LoadFromConfig() {
-  SendMessageW(_chkZWildcard, BM_SETCHECK, g_config.zWildcard ? 1 : 0, 0);
-  SendMessageW(_chkZRepeat, BM_SETCHECK, g_config.zRepeat ? 1 : 0, 0);
-  SendMessageW(_chkSemiSecond, BM_SETCHECK, g_config.semicolonSecond ? 1 : 0,
-               0);
-  SendMessageW(_chkPunctTop, BM_SETCHECK, g_config.punctuationTop ? 1 : 0, 0);
-  SendMessageW(_chkPerKey, BM_SETCHECK, g_config.perKeyHint ? 1 : 0, 0);
-  SendMessageW(_chkInline, BM_SETCHECK, g_config.inlinePreedit ? 1 : 0, 0);
-  SendMessageW(_chkShowBar, BM_SETCHECK, g_config.showStatusBar ? 1 : 0, 0);
-  SendMessageW(_chkShiftDirect, BM_SETCHECK, g_config.shiftDirectCommit ? 1 : 0,
-               0);
+  _draft = g_config;
+  SetCheck(_controls.chkZWildcard, _draft.zWildcard);
+  SetCheck(_controls.chkZRepeat, _draft.zRepeat);
+  SetCheck(_controls.chkSemiSecond, _draft.semicolonSecond);
+  SetCheck(_controls.chkPunctTop, _draft.punctuationTop);
+  SetCheck(_controls.chkPerKey, _draft.perKeyHint);
+  SetCheck(_controls.chkGbkExt, _draft.gbkExt);
+  SetCheck(_controls.chkInline, _draft.inlinePreedit);
+  SetCheck(_controls.chkShiftDirect, _draft.shiftDirectCommit);
+  SetCheck(_controls.chkShowBar, _draft.showStatusBar);
+  SetCheck(_controls.radVert, _draft.candLayout == CandLayout::Vertical);
+  SetCheck(_controls.radHorz, _draft.candLayout == CandLayout::Horizontal);
 
-  SendMessageW(_radVert, BM_SETCHECK,
-               g_config.candLayout == CandLayout::Vertical ? 1 : 0, 0);
-  SendMessageW(_radHorz, BM_SETCHECK,
-               g_config.candLayout == CandLayout::Horizontal ? 1 : 0, 0);
+  wchar_t text[8];
+  swprintf_s(text, L"%d", _draft.candPageSize);
+  SendMessageW(_controls.cboPage, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)text);
 
-  wchar_t buf[8];
-  swprintf_s(buf, L"%d", g_config.candPageSize);
-  SendMessageW(_cboPage, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)buf);
-  // 字体标签
-  wchar_t label[128];
-  swprintf_s(label, L"%ls %d", g_config.candFontFace, g_config.candFontSize);
-  SetWindowTextW(_lblFont, label);
+  wchar_t fontLabel[128];
+  swprintf_s(fontLabel, L"%ls  %d pt", _draft.candFontFace,
+             _draft.candFontSize);
+  SetWindowTextW(_controls.lblFont, fontLabel);
+  InvalidateRect(_controls.btnTextClr, nullptr, TRUE);
+  InvalidateRect(_controls.btnBgClr, nullptr, TRUE);
+  InvalidateRect(_controls.btnSelClr, nullptr, TRUE);
 }
 
 void CSettingWindow::_SaveToConfig() {
-  g_config.zWildcard =
-      SendMessageW(_chkZWildcard, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  g_config.zRepeat =
-      SendMessageW(_chkZRepeat, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  g_config.semicolonSecond =
-      SendMessageW(_chkSemiSecond, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  g_config.punctuationTop =
-      SendMessageW(_chkPunctTop, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  g_config.perKeyHint =
-      SendMessageW(_chkPerKey, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  g_config.inlinePreedit =
-      SendMessageW(_chkInline, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  g_config.showStatusBar =
-      SendMessageW(_chkShowBar, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  g_config.shiftDirectCommit =
-      SendMessageW(_chkShiftDirect, BM_GETCHECK, 0, 0) == BST_CHECKED;
+  _draft.zWildcard = IsChecked(_controls.chkZWildcard);
+  _draft.zRepeat = IsChecked(_controls.chkZRepeat);
+  _draft.semicolonSecond = IsChecked(_controls.chkSemiSecond);
+  _draft.punctuationTop = IsChecked(_controls.chkPunctTop);
+  _draft.perKeyHint = IsChecked(_controls.chkPerKey);
+  _draft.gbkExt = IsChecked(_controls.chkGbkExt);
+  _draft.inlinePreedit = IsChecked(_controls.chkInline);
+  _draft.shiftDirectCommit = IsChecked(_controls.chkShiftDirect);
+  _draft.showStatusBar = IsChecked(_controls.chkShowBar);
+  _draft.candLayout =
+      IsChecked(_controls.radVert) ? CandLayout::Vertical : CandLayout::Horizontal;
 
-  bool vert = SendMessageW(_radVert, BM_GETCHECK, 0, 0) == BST_CHECKED;
-  g_config.candLayout = vert ? CandLayout::Vertical : CandLayout::Horizontal;
+  int pageIndex = (int)SendMessageW(_controls.cboPage, CB_GETCURSEL, 0, 0);
+  if (pageIndex >= 0)
+    _draft.candPageSize = 3 + pageIndex;
 
-  int idx = (int)SendMessageW(_cboPage, CB_GETCURSEL, 0, 0);
-  if (idx >= 0)
-    g_config.candPageSize = 3 + idx;
+  g_config = _draft;
 }
 
 void CSettingWindow::_ResetToDefault() {
-  JiDaConfig d;
-  SendMessageW(_chkZWildcard, BM_SETCHECK, d.zWildcard ? 1 : 0, 0);
-  SendMessageW(_chkZRepeat, BM_SETCHECK, d.zRepeat ? 1 : 0, 0);
-  SendMessageW(_chkSemiSecond, BM_SETCHECK, d.semicolonSecond ? 1 : 0, 0);
-  SendMessageW(_chkPunctTop, BM_SETCHECK, d.punctuationTop ? 1 : 0, 0);
-  SendMessageW(_chkPerKey, BM_SETCHECK, d.perKeyHint ? 1 : 0, 0);
-  SendMessageW(_chkInline, BM_SETCHECK, d.inlinePreedit ? 1 : 0, 0);
-  SendMessageW(_chkShowBar, BM_SETCHECK, d.showStatusBar ? 1 : 0, 0);
-  SendMessageW(_radVert, BM_SETCHECK,
-               d.candLayout == CandLayout::Vertical ? 1 : 0, 0);
-  SendMessageW(_radHorz, BM_SETCHECK,
-               d.candLayout == CandLayout::Horizontal ? 1 : 0, 0);
-  SendMessageW(_chkShiftDirect, BM_SETCHECK, d.shiftDirectCommit ? 1 : 0, 0);
+  _draft = JiDaConfig();
+  SetCheck(_controls.chkZWildcard, _draft.zWildcard);
+  SetCheck(_controls.chkZRepeat, _draft.zRepeat);
+  SetCheck(_controls.chkSemiSecond, _draft.semicolonSecond);
+  SetCheck(_controls.chkPunctTop, _draft.punctuationTop);
+  SetCheck(_controls.chkPerKey, _draft.perKeyHint);
+  SetCheck(_controls.chkGbkExt, _draft.gbkExt);
+  SetCheck(_controls.chkInline, _draft.inlinePreedit);
+  SetCheck(_controls.chkShiftDirect, _draft.shiftDirectCommit);
+  SetCheck(_controls.chkShowBar, _draft.showStatusBar);
+  SetCheck(_controls.radVert, _draft.candLayout == CandLayout::Vertical);
+  SetCheck(_controls.radHorz, _draft.candLayout == CandLayout::Horizontal);
 
-  wchar_t buf[8];
-  swprintf_s(buf, L"%d", d.candPageSize);
-  SendMessageW(_cboPage, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)buf);
+  wchar_t text[8];
+  swprintf_s(text, L"%d", _draft.candPageSize);
+  SendMessageW(_controls.cboPage, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)text);
+
+  wchar_t fontLabel[128];
+  swprintf_s(fontLabel, L"%ls  %d pt", _draft.candFontFace,
+             _draft.candFontSize);
+  SetWindowTextW(_controls.lblFont, fontLabel);
+  InvalidateRect(_controls.btnTextClr, nullptr, TRUE);
+  InvalidateRect(_controls.btnBgClr, nullptr, TRUE);
+  InvalidateRect(_controls.btnSelClr, nullptr, TRUE);
+}
+
+void CSettingWindow::_SelectPage(int pageId) {
+  for (const Page& page : _pages)
+    ShowWindow(page.window, page.id == pageId ? SW_SHOW : SW_HIDE);
 }
 
 void CSettingWindow::_Close(bool save) {
@@ -366,9 +477,85 @@ LRESULT CALLBACK CSettingWindow::_WndProc(HWND h,
   return self ? self->_Handle(msg, w, l) : DefWindowProcW(h, msg, w, l);
 }
 
+LRESULT CALLBACK CSettingWindow::_PageWndProc(HWND h,
+                                              UINT msg,
+                                              WPARAM wParam,
+                                              LPARAM lParam) {
+  if (msg == WM_NCCREATE) {
+    auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+    SetWindowLongPtrW(h, GWLP_USERDATA,
+                      reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+  }
+  HWND owner =
+      reinterpret_cast<HWND>(GetWindowLongPtrW(h, GWLP_USERDATA));
+  if (owner && (msg == WM_COMMAND || msg == WM_DRAWITEM))
+    return SendMessageW(owner, msg, wParam, lParam);
+  return DefWindowProcW(h, msg, wParam, lParam);
+}
+
 LRESULT CSettingWindow::_Handle(UINT msg, WPARAM wParam, LPARAM lParam) {
   switch (msg) {
-    case WM_COMMAND: {
+    case WM_NOTIFY: {
+      auto* header = reinterpret_cast<NMHDR*>(lParam);
+      if (header->hwndFrom == _tree && header->code == TVN_SELCHANGEDW) {
+        auto* change = reinterpret_cast<NMTREEVIEWW*>(lParam);
+        int pageId = (int)change->itemNew.lParam;
+        if (pageId) {
+          _SelectPage(pageId);
+        } else {
+          HTREEITEM firstPage =
+              FindFirstPageItem(_tree, TreeView_GetChild(_tree, change->itemNew.hItem));
+          if (firstPage)
+            TreeView_SelectItem(_tree, firstPage);
+        }
+        return 0;
+      }
+      break;
+    }
+    case WM_DRAWITEM: {
+      auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+      COLORREF color = RGB(0, 0, 0);
+      switch (draw->CtlID) {
+        case ID_BTN_TEXTCLR:
+          color = _draft.candTextColor;
+          break;
+        case ID_BTN_BGCLR:
+          color = _draft.candBgColor;
+          break;
+        case ID_BTN_SELCLR:
+          color = _draft.candSelBgColor;
+          break;
+        default:
+          break;
+      }
+      if (draw->CtlID == ID_BTN_TEXTCLR || draw->CtlID == ID_BTN_BGCLR ||
+          draw->CtlID == ID_BTN_SELCLR) {
+        HBRUSH brush = CreateSolidBrush(color);
+        FillRect(draw->hDC, &draw->rcItem, brush);
+        DeleteObject(brush);
+        DrawEdge(draw->hDC, &draw->rcItem,
+                 (draw->itemState & ODS_SELECTED) ? EDGE_SUNKEN : EDGE_RAISED,
+                 BF_RECT);
+        int luminance = (GetRValue(color) * 299 + GetGValue(color) * 587 +
+                         GetBValue(color) * 114) /
+                        1000;
+        SetTextColor(draw->hDC,
+                     luminance < 128 ? RGB(255, 255, 255) : RGB(0, 0, 0));
+        SetBkMode(draw->hDC, TRANSPARENT);
+        HFONT oldFont = (HFONT)SelectObject(draw->hDC, _font);
+        wchar_t label[64];
+        swprintf_s(label, L"#%02X%02X%02X", GetRValue(color), GetGValue(color),
+                   GetBValue(color));
+        DrawTextW(draw->hDC, label, -1, &draw->rcItem,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(draw->hDC, oldFont);
+        if (draw->itemState & ODS_FOCUS)
+          DrawFocusRect(draw->hDC, &draw->rcItem);
+        return TRUE;
+      }
+      break;
+    }
+    case WM_COMMAND:
       switch (LOWORD(wParam)) {
         case ID_BTN_OK:
           _Close(true);
@@ -378,80 +565,65 @@ LRESULT CSettingWindow::_Handle(UINT msg, WPARAM wParam, LPARAM lParam) {
           return 0;
         case ID_BTN_FONT: {
           LOGFONTW lf = {};
-          wcscpy_s(lf.lfFaceName, g_config.candFontFace);
+          wcscpy_s(lf.lfFaceName, _draft.candFontFace);
           HDC hdc = GetDC(_hwnd);
           int dpi = GetDeviceCaps(hdc, LOGPIXELSY);
           ReleaseDC(_hwnd, hdc);
-          lf.lfHeight = -MulDiv(g_config.candFontSize, dpi, 72);
-          lf.lfWeight = g_config.candFontWeight;
-          lf.lfItalic = g_config.candFontItalic ? TRUE : FALSE;
+          lf.lfHeight = -MulDiv(_draft.candFontSize, dpi, 72);
+          lf.lfWeight = _draft.candFontWeight;
+          lf.lfItalic = _draft.candFontItalic ? TRUE : FALSE;
 
-          CHOOSEFONTW cf = {};
-          cf.lStructSize = sizeof(cf);
-          cf.hwndOwner = _hwnd;
-          cf.lpLogFont = &lf;
-          cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_EFFECTS;
-          cf.rgbColors = g_config.candTextColor;
-
-          if (ChooseFontW(&cf)) {
-            wcscpy_s(g_config.candFontFace, lf.lfFaceName);
-            g_config.candFontSize = cf.iPointSize / 10;
-            if (g_config.candFontSize < 8)
-              g_config.candFontSize = 8;
-            if (g_config.candFontSize > 48)
-              g_config.candFontSize = 48;
-            g_config.candFontWeight = lf.lfWeight;
-            g_config.candFontItalic = lf.lfItalic != 0;
-            g_config.candTextColor = cf.rgbColors;
+          CHOOSEFONTW chooseFont = {};
+          chooseFont.lStructSize = sizeof(chooseFont);
+          chooseFont.hwndOwner = _hwnd;
+          chooseFont.lpLogFont = &lf;
+          chooseFont.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_EFFECTS;
+          chooseFont.rgbColors = _draft.candTextColor;
+          if (ChooseFontW(&chooseFont)) {
+            wcscpy_s(_draft.candFontFace, lf.lfFaceName);
+            _draft.candFontSize = max(8, min(48, chooseFont.iPointSize / 10));
+            _draft.candFontWeight = lf.lfWeight;
+            _draft.candFontItalic = lf.lfItalic != 0;
+            _draft.candTextColor = chooseFont.rgbColors;
 
             wchar_t label[128];
-            swprintf_s(label, L"%ls %d", g_config.candFontFace,
-                       g_config.candFontSize);
-            SetWindowTextW(_lblFont, label);
+            swprintf_s(label, L"%ls  %d pt", _draft.candFontFace,
+                       _draft.candFontSize);
+            SetWindowTextW(_controls.lblFont, label);
+            InvalidateRect(_controls.btnTextClr, nullptr, TRUE);
           }
           return 0;
         }
-        case ID_BTN_TEXTCLR: {
-          static COLORREF cust[16] = {};
-          CHOOSECOLORW cc = {};
-          cc.lStructSize = sizeof(cc);
-          cc.hwndOwner = _hwnd;
-          cc.lpCustColors = cust;
-          cc.rgbResult = g_config.candTextColor;
-          cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-          if (ChooseColorW(&cc))
-            g_config.candTextColor = cc.rgbResult;
-          return 0;
-        }
-        case ID_BTN_BGCLR: {
-          static COLORREF cust[16] = {};
-          CHOOSECOLORW cc = {};
-          cc.lStructSize = sizeof(cc);
-          cc.hwndOwner = _hwnd;
-          cc.lpCustColors = cust;
-          cc.rgbResult = g_config.candBgColor;
-          cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-          if (ChooseColorW(&cc))
-            g_config.candBgColor = cc.rgbResult;
-          return 0;
-        }
+        case ID_BTN_TEXTCLR:
+        case ID_BTN_BGCLR:
         case ID_BTN_SELCLR: {
-          static COLORREF cust[16] = {};
-          CHOOSECOLORW cc = {};
-          cc.lStructSize = sizeof(cc);
-          cc.hwndOwner = _hwnd;
-          cc.lpCustColors = cust;
-          cc.rgbResult = g_config.candSelBgColor;
-          cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-          if (ChooseColorW(&cc)) {
-            g_config.candSelBgColor = cc.rgbResult;
-            // 自动计算高亮文字色：暗背景用白字，亮背景用黑字
-            int r = GetRValue(cc.rgbResult);
-            int g = GetGValue(cc.rgbResult);
-            int b = GetBValue(cc.rgbResult);
-            int luminance = (r * 299 + g * 587 + b * 114) / 1000;
-            g_config.candSelTextColor =
-                (luminance < 128) ? RGB(255, 255, 255) : RGB(0, 0, 0);
+          static COLORREF customColors[16] = {};
+          CHOOSECOLORW chooseColor = {};
+          chooseColor.lStructSize = sizeof(chooseColor);
+          chooseColor.hwndOwner = _hwnd;
+          chooseColor.lpCustColors = customColors;
+          chooseColor.Flags = CC_FULLOPEN | CC_RGBINIT;
+          COLORREF* selectedColor = nullptr;
+          if (LOWORD(wParam) == ID_BTN_TEXTCLR) {
+            selectedColor = &_draft.candTextColor;
+          } else if (LOWORD(wParam) == ID_BTN_BGCLR) {
+            selectedColor = &_draft.candBgColor;
+          } else {
+            selectedColor = &_draft.candSelBgColor;
+          }
+          chooseColor.rgbResult = *selectedColor;
+          if (ChooseColorW(&chooseColor)) {
+            *selectedColor = chooseColor.rgbResult;
+            if (LOWORD(wParam) == ID_BTN_SELCLR) {
+              int luminance =
+                  (GetRValue(chooseColor.rgbResult) * 299 +
+                   GetGValue(chooseColor.rgbResult) * 587 +
+                   GetBValue(chooseColor.rgbResult) * 114) /
+                  1000;
+              _draft.candSelTextColor =
+                  luminance < 128 ? RGB(255, 255, 255) : RGB(0, 0, 0);
+            }
+            InvalidateRect((HWND)lParam, nullptr, TRUE);
           }
           return 0;
         }
@@ -460,21 +632,20 @@ LRESULT CSettingWindow::_Handle(UINT msg, WPARAM wParam, LPARAM lParam) {
           return 0;
       }
       return 0;
-    }
     case WM_CLOSE:
       _Close(false);
       return 0;
 
     case WM_NCDESTROY: {
-      HWND h = _hwnd;
-      SetWindowLongPtrW(h, GWLP_USERDATA, 0);
+      HWND window = _hwnd;
+      SetWindowLongPtrW(window, GWLP_USERDATA, 0);
       _hwnd = nullptr;
       if (_owner && IsWindow(_owner))
         EnableWindow(_owner, TRUE);
       if (s_SettingInstance == this)
         s_SettingInstance = nullptr;
-      delete this;  // 自删除，不走 PostQuitMessage
-      return DefWindowProcW(h, msg, wParam, lParam);
+      delete this;
+      return DefWindowProcW(window, msg, wParam, lParam);
     }
   }
   return DefWindowProcW(_hwnd, msg, wParam, lParam);
