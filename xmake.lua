@@ -1,0 +1,23 @@
+set_project("JiDaTSF")
+set_version("1.0.0")
+set_xmakever("2.8.2")
+
+add_rules("mode.debug", "mode.release")
+set_allowedplats("windows")
+set_allowedarchs("x86", "x64")
+set_defaultplat("windows")
+set_languages("c++17")
+set_toolchains("msvc")
+
+target("JiDaTSF")
+    set_kind("shared")
+    set_basename("JiDaTSF")
+    set_targetdir("bin/$(arch)/$(mode)")
+    set_runtimes(is_mode("debug") and "MDd" or "MD")
+    add_rules("platform.windows.def", "platform.windows.manifest")
+    add_files("*.cpp", "JiDaTSF.rc", "JiDaTSF.def", "JiDaTSF.manifest")
+    add_includedirs(".")
+    add_defines("_WINDOWS", "_USRDLL", "UNICODE", "_UNICODE")
+    add_cxxflags("/utf-8", {tools = {"cl"}})
+    add_syslinks("shcore", "ole32", "oleaut32", "advapi32", "user32",
+                 "gdi32", "comctl32", "comdlg32", "shell32", "shlwapi")

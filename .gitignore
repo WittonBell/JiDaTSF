@@ -1,4 +1,7 @@
 bin
 obj
+build
+.xmake
+dist
 .vs
 /*.aps

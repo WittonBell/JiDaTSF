@@ -6,7 +6,7 @@
 - 目标系统：Windows 10 1607+ / Windows 11
 - 目标平台：x64 / x86
 - 语言：C++17
-- 构建工具：Visual Studio 2022 + Windows SDK 10
+- 构建工具：xmake + Visual Studio 2022 C++ 工具集 + Windows SDK 10
 
 ---
 
@@ -45,14 +45,30 @@
 
 ## 二、安装 / 卸载
 
-### 安装
+### 从 NSIS 安装包安装
+
+使用 xmake 和 NSIS 3 生成安装包：
+
+```powershell
+# 默认生成 x64 安装包
+powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
+
+# 生成 x86 安装包
+powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -Platform x86
+```
+
+安装包位于 `dist\JiDaTSF-Setup-x64.exe`（或 `x86`）。运行安装包时会请求管理员权限、安装 DLL 和码表、自动注册 COM/TSF 输入法，并仅为安装目录的 `conf\` 配置文件夹授予普通用户修改权限。卸载会注销输入法；`conf\` 中的用户配置会保留。
+
+注册完成后，按 Windows 提示打开「设置 → 时间和语言 → 语言和区域 → 中文（简体）→ 选项 → 键盘 → 添加键盘」，添加「极达五笔」。
+
+### 手动注册开发构建
 
 ```powershell
 # 需要管理员权限
 powershell -ExecutionPolicy Bypass -File scripts\register.ps1
 ```
 
-`register.ps1` 会：
+`register.ps1` 用于手动注册开发构建，会：
 
 1. 调用 `regsvr32 /s` 注册 DLL
 2. 把 `data\jidian_wubi86.txt` 复制到 DLL 同目录的 `data\` 下
@@ -73,13 +89,22 @@ powershell -ExecutionPolicy Bypass -File scripts\unregister.ps1
 
 ---
 
+## 构建
+
+使用 xmake 和 Visual Studio 2022 C++ 工具集构建 DLL：
+
+```powershell
+xmake f -p windows -a x64 -m release --toolchain=msvc
+xmake build JiDaTSF
+```
+
+将 `-a x64` 改为 `-a x86` 可构建 32 位版本。构建输出位于 `bin\<arch>\<mode>\JiDaTSF.dll`。NSIS 安装包的完整构建和码表缓存生成流程见 `scripts\build-installer.ps1`。
+
 ## 三、码表
 
 ### 路径
 
-```
-JiDaTSF/bin/x64/Release/data/jidian_wubi86.txt
-```
+词库源文件位于 `data\jidian_wubi86.txt`。NSIS 安装包会将它放到 DLL 同目录的 `data\` 文件夹，并生成 `.jdc` 启动缓存。xmake 构建的 DLL 位于 `bin\<arch>\release\JiDaTSF.dll`；Visual Studio 构建仍使用 `bin\<arch>\Release\JiDaTSF.dll`。
 
 码表必须放在与 `JiDaTSF.dll` 同目录的 `data\` 子目录下。`DllMain` 在加载 DLL 时按 DLL 所在路径查找。
 安装脚本会根据码表生成启动缓存；更新词库后重新运行安装脚本即可刷新缓存。缓存不可用或与源词库版本不符时，输入法会回退到异步文本加载。
