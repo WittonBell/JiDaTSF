@@ -70,7 +70,7 @@ struct JiDaConfig {
   bool zWildcard = true;
   bool semicolonSecond = true;
   bool punctuationTop = true;
-  bool perKeyHint = true;
+  bool perKeyHint = true; // 在候选后显示尚未输入的编码后缀。
   CharacterSetVersion characterSetVersion = CharacterSetVersion::GBK;
   bool inlinePreedit = false;
   bool showStatusBar = true;

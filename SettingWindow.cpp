@@ -194,7 +194,7 @@ bool ShowKeyEditDialog(HWND parent,
   int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - 160) / 2;
   HWND dialog = CreateWindowExW(
       WS_EX_DLGMODALFRAME, kKeyEditClass, L"设置按键字符",
-      WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, 330, 160, parent, nullptr,
+      WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, 350, 200, parent, nullptr,
       instance, &state);
   if (!dialog)
     return false;
@@ -510,7 +510,7 @@ void CSettingWindow::_Layout() {
             _MkCheck(L"分号选第二重码", 24, 178, 240, ID_SEMI_SECOND);
         _controls.chkPunctTop =
             _MkCheck(L"标点顶字上屏", 24, 214, 240, ID_PUNCT_TOP);
-        _controls.chkPerKey = _MkCheck(L"逐键提示", 292, 106, 220, ID_PERKEY_HINT);
+        _controls.chkPerKey = _MkCheck(L"启用编码逐渐提示", 292, 106, 220, ID_PERKEY_HINT);
         _controls.chkInline = _MkCheck(L"嵌入预编辑", 292, 142, 220, ID_INLINE_PREEDIT);
         _controls.chkShiftDirect =
             _MkCheck(L"Shift 直接上屏", 292, 178, 240, ID_SHIFT_DIRECT);

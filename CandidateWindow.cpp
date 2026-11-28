@@ -12,6 +12,27 @@ static bool IsVertical() {
   return g_config.candLayout == CandLayout::Vertical;
 }
 
+static std::wstring GetCandidateKeyHint(const CandidateItem& item,
+                                        const std::wstring& inputCode) {
+  if (!g_config.perKeyHint || inputCode.empty() ||
+      item.code.size() <= inputCode.size() ||
+      item.code.compare(0, inputCode.size(), inputCode) != 0)
+    return L"";
+  return item.code.substr(inputCode.size());
+}
+
+static COLORREF GetCandidateKeyHintColor(COLORREF foreground) {
+  const int redDifference = GetRValue(foreground) - 128;
+  const int greenDifference = GetGValue(foreground);
+  const int blueDifference = GetBValue(foreground);
+  // 前景色在 RGB 欧氏距离 48 以内视为接近暗红色，提示码改用深蓝色。
+  if (redDifference * redDifference + greenDifference * greenDifference +
+          blueDifference * blueDifference <=
+      48 * 48)
+    return RGB(0, 0, 192);
+  return RGB(192, 0, 0);
+}
+
 bool CCandidateWindow::Create(HINSTANCE h) {
   // 注册窗口类并以 NOACTIVATE 风格创建悬浮候选框。
   WNDCLASSEX wc = {sizeof(wc)};
@@ -273,7 +294,16 @@ void CCandidateWindow::_UpdateSize() {
           std::to_wstring(i - _pageStart + 1) + L". " + _items[i].text;
       SIZE sz = {0, 0};
       GetTextExtentPoint32W(dc, line.c_str(), (int)line.size(), &sz);
-      maxLineW = (std::max)(maxLineW, (int)sz.cx);
+      int lineWidth = (int)sz.cx;
+      std::wstring hint = GetCandidateKeyHint(_items[i], _title);
+      if (!hint.empty()) {
+        HGDIOBJ oldHintFont = SelectObject(dc, _hintFont);
+        SIZE hintSz = {0, 0};
+        GetTextExtentPoint32W(dc, hint.c_str(), (int)hint.size(), &hintSz);
+        SelectObject(dc, oldHintFont);
+        lineWidth += (int)hintSz.cx;
+      }
+      maxLineW = (std::max)(maxLineW, lineWidth);
     }
     w = (std::max)(maxLineW, titleW) + _padding * 2;
     if (visible < 1)
@@ -290,8 +320,17 @@ void CCandidateWindow::_UpdateSize() {
           std::to_wstring(i - _pageStart + 1) + L"." + _items[i].text;
       SIZE sz = {0, 0};
       GetTextExtentPoint32W(dc, line.c_str(), (int)line.size(), &sz);
-      _cellWidths.push_back((int)sz.cx);
-      totalCellW += (int)sz.cx;
+      int cellWidth = (int)sz.cx;
+      std::wstring hint = GetCandidateKeyHint(_items[i], _title);
+      if (!hint.empty()) {
+        HGDIOBJ oldHintFont = SelectObject(dc, _hintFont);
+        SIZE hintSz = {0, 0};
+        GetTextExtentPoint32W(dc, hint.c_str(), (int)hint.size(), &hintSz);
+        SelectObject(dc, oldHintFont);
+        cellWidth += (int)hintSz.cx;
+      }
+      _cellWidths.push_back(cellWidth);
+      totalCellW += cellWidth;
     }
 
     int n = (int)_cellWidths.size();
@@ -456,16 +495,31 @@ LRESULT CCandidateWindow::_OnPaint() {
       std::wstring line = std::to_wstring(local + 1) + L". " + _items[i].text;
       RECT row = {_padding, y, rc.right - _padding, y + _rowHeight};
       // 选中行
+      COLORREF foreground;
       if (i == _selected) {
         HBRUSH selBg = CreateSolidBrush(g_config.candSelBgColor);
         FillRect(mem, &row, selBg);
         DeleteObject(selBg);
-        SetTextColor(mem, g_config.candSelTextColor);
+        foreground = g_config.candSelTextColor;
       } else {
-        SetTextColor(mem, g_config.candTextColor);
+        foreground = g_config.candTextColor;
       }
+      SetTextColor(mem, foreground);
       DrawTextW(mem, line.c_str(), (int)line.size(), &row,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+      std::wstring hint = GetCandidateKeyHint(_items[i], _title);
+      if (!hint.empty()) {
+        SIZE lineSz = {0, 0};
+        GetTextExtentPoint32W(mem, line.c_str(), (int)line.size(), &lineSz);
+        HGDIOBJ oldHintFont = SelectObject(mem, _hintFont);
+        RECT hintRc = {row.left + (LONG)lineSz.cx, row.top, row.right,
+                       row.bottom};
+        SetTextColor(mem, GetCandidateKeyHintColor(foreground));
+        DrawTextW(mem, hint.c_str(), (int)hint.size(), &hintRc,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SetTextColor(mem, foreground);
+        SelectObject(mem, oldHintFont);
+      }
       y += _rowHeight;
     }
   } else {
@@ -478,16 +532,31 @@ LRESULT CCandidateWindow::_OnPaint() {
       std::wstring line = std::to_wstring(local + 1) + L"." + _items[i].text;
       RECT cell = {x, y, x + cw, y + _rowHeight};
       // 选中行
+      COLORREF foreground;
       if (i == _selected) {
         HBRUSH selBg = CreateSolidBrush(g_config.candSelBgColor);
         FillRect(mem, &cell, selBg);
         DeleteObject(selBg);
-        SetTextColor(mem, g_config.candSelTextColor);
+        foreground = g_config.candSelTextColor;
       } else {
-        SetTextColor(mem, g_config.candTextColor);
+        foreground = g_config.candTextColor;
       }
+      SetTextColor(mem, foreground);
       DrawTextW(mem, line.c_str(), (int)line.size(), &cell,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+      std::wstring hint = GetCandidateKeyHint(_items[i], _title);
+      if (!hint.empty()) {
+        SIZE lineSz = {0, 0};
+        GetTextExtentPoint32W(mem, line.c_str(), (int)line.size(), &lineSz);
+        HGDIOBJ oldHintFont = SelectObject(mem, _hintFont);
+        RECT hintRc = {cell.left + (LONG)lineSz.cx, cell.top, cell.right,
+                       cell.bottom};
+        SetTextColor(mem, GetCandidateKeyHintColor(foreground));
+        DrawTextW(mem, hint.c_str(), (int)hint.size(), &hintRc,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        SetTextColor(mem, foreground);
+        SelectObject(mem, oldHintFont);
+      }
       x += cw + _cellGap;
     }
   }

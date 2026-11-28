@@ -31,7 +31,7 @@
 | 翻页 | `-` / `=` 或 PageUp / PageDown |
 | 鼠标选词 | 候选窗口点击 / 滚轮翻页 |
 | Shift + 字母 | 直接输出大写英文字母，走系统输入 |
-| 逐键提示 | 前缀扩展，短码优先 |
+| 编码逐渐提示 | 在候选文字后显示该词编码中尚未输入的部分 |
 | 汉字库版本 | 可选 GB2312、GBK、GB18030-2000、GB18030-2005 |
 
 ### 显示
@@ -135,7 +135,7 @@ xmake build JiDaTSF
 | `-` / `=` 翻页 | `JiDaTextService::OnKeyDown` | 也支持 PageUp/PageDown |
 | 鼠标选词 | `CCandidateWindow::_OnLButtonUp` | 回调 `OnPick` |
 | Shift 临时英文 | `JiDaTextService::OnKeyDown` | 交给系统 |
-| 逐键提示 | `JiDaEngine::Query` | 前缀扩展，短码优先 |
+| 逐键提示 | `CCandidateWindow::_OnPaint` | 显示候选编码中尚未输入的后缀 |
 | Per-Monitor V2 | `DpiHelper::EnablePerMonitorV2` | 清单 + 运行时 |
 | 候选窗口跨屏 DPI | `CCandidateWindow::WM_DPICHANGED` | |
 

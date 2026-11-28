@@ -131,8 +131,7 @@ void JiDaEngine::Query(const std::wstring& code) {
           return true;
       }
     }
-    // 当前节点没有再增加候选时，继续遍历所有 26 个字母分支，
-    // 从而把以当前编码为前缀的长编码词条也纳入候选。
+    // 按 a-z 顺序遍历子树，将以当前编码为前缀的词条追加为候选。
     for (int child : g_trie[node].children) {
       if (child >= 0 && self(self, child))
         return true;
@@ -141,15 +140,15 @@ void JiDaEngine::Query(const std::wstring& code) {
   };
 
   // 阶段 1：普通 Trie 精确匹配与前缀匹配。
-  // TrieWalk 从根节点逐字符进入，与 code 对应的节点就是其编码前缀。
-  // 例如 code 为 "a"，会遍历节点自身及所有以 "a" 开头的后续编码。
+  // TrieWalk 从根节点逐字符进入，定位到与 code 完全对应的节点。
+  // 从此节点遍历子树可以同时取得精确编码及其所有更长编码的候选。
   int cur = TrieWalk(code);
   if (cur >= 0)
     appendSubtree(appendSubtree, cur);
 
   // 阶段 2：Z 通配匹配。
   // g_config.zWildcard 启用时，用户编码中按 wildcardChar 配置出现的位置
-  // 会被视为任意字母占位符；只在普通查询候选不足或仍有剩余容量时继续。
+  // 会被视为任意字母占位符，并沿用普通查询的前缀扩展方式。
   if (g_config.zWildcard) {
     wchar_t wc = g_config.wildcardChar;
     size_t zpos = code.find(wc);
