@@ -1,4 +1,5 @@
 #include "StatusWindow.h"
+// 状态栏实现：绘制中英文、标点、全半角等状态按钮及悬浮位置逻辑。
 #include "Globals.h"
 
 #include <commctrl.h>
@@ -30,6 +31,7 @@ constexpr int kBaseGap = 3;
 constexpr int kBaseMargin = 5;
 
 void DrawFrameRect(HDC dc, const RECT& rc, COLORREF color) {
+  // 绘制无填充边框，用于状态按钮和窗口轮廓。
   HPEN pen = CreatePen(PS_SOLID, 1, color);
   HGDIOBJ oldPen = SelectObject(dc, pen);
   HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -52,6 +54,7 @@ bool CStatusWindow::Create(HINSTANCE instance,
                            ActiveProfileCheck activeProfileCheck,
                            int x,
                            int y) {
+  // 创建状态条、提示框、布局、位置并按配置决定是否显示。
   if (_hwnd)
     return true;
 
@@ -274,6 +277,7 @@ int CStatusWindow::Scale(int value) const {
 }
 
 void CStatusWindow::RebuildLayout() {
+  // 按 DPI 缩放标题、按钮和间距，并重新计算窗口尺寸。
   if (!_hwnd)
     return;
 

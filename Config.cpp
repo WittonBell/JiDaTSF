@@ -1,4 +1,5 @@
 #include "Config.h"
+// 配置持久化实现：负责 INI 读写、默认值和各类枚举转换。
 #include <algorithm>
 #include <shlobj.h>
 #include "Globals.h"
@@ -188,6 +189,7 @@ static void WriteKeyMappings(
 }
 
 void LoadJiDaConfig() {
+  // 从 INI 读取通用、字符集、候选框、字体、颜色及快捷键配置。
   std::wstring configPath = GetJiDaConfigPath();
   if (configPath.empty() ||
       GetFileAttributesW(configPath.c_str()) == INVALID_FILE_ATTRIBUTES)
@@ -257,6 +259,7 @@ void LoadJiDaConfig() {
 }
 
 void SaveJiDaConfig() {
+  // 将当前全局配置完整写回 INI，自动创建配置目录。
   if (GetJiDaConfigPath().empty())
     return;
 

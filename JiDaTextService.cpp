@@ -1,4 +1,5 @@
 #include "JiDaTextService.h"
+// TSF 文本服务实现：处理按键、组合文本、候选窗口和状态切换。
 #include <ctfutb.h>
 #include <cwctype>
 #include "DpiHelper.h"
@@ -6,6 +7,7 @@
 #include "SettingWindow.h"
 
 static wchar_t VkToChar(WPARAM vk, LPARAM lParam, bool shift) {
+  // 优先读取软键盘和标点配置，再回退到 Windows 键盘布局转换。
   wchar_t configuredCharacter = 0;
   if (GetSoftKeyboardCharacter(static_cast<UINT>(vk), shift,
                                configuredCharacter))
@@ -37,6 +39,7 @@ static wchar_t VkToChar(WPARAM vk, LPARAM lParam, bool shift) {
 static bool IsShortcutKey(ChineseToggleShortcut shortcut,
                           WPARAM key,
                           LPARAM keyData) {
+  // 判断左右 Shift/Control 或组合快捷键是否是中英文切换。
   if (shortcut == ChineseToggleShortcut::Disabled ||
       ((keyData >> 30) & 1) != 0)
     return false;
@@ -87,6 +90,7 @@ static bool IsShortcutKey(ChineseToggleShortcut shortcut,
 //   4 字：各取前 1 码
 //   5+ 字：第 1、2、3、末字各 1 码
 static std::wstring BuildPhraseCode(const std::vector<PhraseEntry>& entries) {
+  // 根据最近提交汉字的全码按五笔词组取码规则生成编码。
   if (entries.empty())
     return L"";
 
@@ -162,6 +166,7 @@ STDMETHODIMP_(ULONG) CJiDaTextService::Release() {
 }
 
 STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
+  // 激活 TSF 文本服务并注册按键、线程、配置档和文档事件通知。
   if (!ptim)
     return E_INVALIDARG;
   if (_threadMgr)
@@ -287,6 +292,7 @@ STDMETHODIMP CJiDaTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
 }
 
 STDMETHODIMP CJiDaTextService::Deactivate() {
+  // 注销通知、结束组合并释放线程及配置档管理器引用。
   _Cancel();
 
   if (_threadMgr) {
@@ -347,6 +353,7 @@ STDMETHODIMP CJiDaTextService::Deactivate() {
 }
 
 STDMETHODIMP CJiDaTextService::OnSetFocus(BOOL) {
+  // 焦点变化时同步候选、状态栏与组合文本可见性。
   return S_OK;
 }
 
@@ -1116,6 +1123,7 @@ void CJiDaTextService::_CommitAndEnd(ITfContext* pic,
 }
 
 void CJiDaTextService::_EnsureComposition(ITfContext* pic) {
+  // 缺少组合对象时创建组合并注册组合终止通知。
   if (_composition)
     return;
   if (_clientId == TF_CLIENTID_NULL)
@@ -1130,6 +1138,7 @@ void CJiDaTextService::_EnsureComposition(ITfContext* pic) {
 }
 
 void CJiDaTextService::_SyncComposition(ITfContext* pic) {
+  // 根据内联预编辑配置更新宿主中的组合文本。
   if (!g_config.inlinePreedit) {
     if (!_composition)
       _EnsureComposition(pic);
@@ -1147,6 +1156,7 @@ void CJiDaTextService::_SyncComposition(ITfContext* pic) {
 }
 
 void CJiDaTextService::_GetHostCaret(ITfContext* pic, RECT& rcCaret) {
+  // 从宿主上下文查询当前插入点矩形，供悬浮窗口定位。
   bool bPositioned = false;
 
   // 创建 Edit Session
@@ -1191,6 +1201,7 @@ void CJiDaTextService::_GetHostCaret(ITfContext* pic, RECT& rcCaret) {
 }
 
 void CJiDaTextService::_ShowCandidates(ITfContext* pic) {
+  // 在宿主光标附近显示候选列表或临时英文内容。
   if (!_candWnd)
     return;
 
@@ -1230,6 +1241,7 @@ void CJiDaTextService::_HideCandidates() {
 }
 
 void CJiDaTextService::_Cancel() {
+  // 清空输入引擎、组合文本和候选窗口并恢复宿主状态。
   if (_composition) {
     _composition->Release();
     _composition = nullptr;
@@ -1318,6 +1330,7 @@ bool CJiDaTextService::_IsJiDaActiveProfile() {
 }
 
 void CJiDaTextService::_OnStatusCommand(StatusCommand cmd) {
+  // 响应状态栏命令并将新状态同步回全局配置和界面。
   switch (cmd) {
     case StatusCommand::ToggleChinese:
       _status.chinese = !_status.chinese;

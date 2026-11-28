@@ -1,8 +1,10 @@
 #include "DpiHelper.h"
+// DLL 入口：初始化全局实例、配置、用户词及码表路径。
 #include "Globals.h"
 #include "Config.h"
 
 BOOL APIENTRY DllMain(HMODULE h, DWORD r, LPVOID) {
+  // 进程加载时保存模块句柄并初始化配置、用户词和资源路径。
   if (r == DLL_PROCESS_ATTACH) {
     g_hInstance = h;
     DisableThreadLibraryCalls(h);

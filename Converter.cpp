@@ -1,8 +1,6 @@
 #include "Converter.h"
+// 文本转换实现：使用系统接口转换繁简字，并手动映射半角到全角。
 #include <windows.h>
-
-#include <windows.h>
-#include "Converter.h"
 
 static std::wstring LCMap(const std::wstring& src, DWORD flags) {
   if (src.empty())

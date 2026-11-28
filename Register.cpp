@@ -1,4 +1,4 @@
-// Register.cpp
+// TSF 配置档注册、注销及 AppContainer 读取权限设置实现。
 #include <aclapi.h>
 #include <msctf.h>
 #include <sddl.h>
@@ -20,6 +20,7 @@ STDAPI DllUnregisterServer();
 // COM：注册 CLSID\{...}\InprocServer32
 // ------------------------------------------------------------------
 static HRESULT RegisterComServer(const CLSID& clsid, const wchar_t* dllPath) {
+  // 在注册表中登记 CLSID、DLL 路径及 Apartment 线程模型。
   wchar_t clsidStr[64] = {0};
   if (!StringFromGUID2(clsid, clsidStr, 64))
     return E_FAIL;
@@ -56,6 +57,7 @@ static HRESULT RegisterComServer(const CLSID& clsid, const wchar_t* dllPath) {
 // 授予 AppContainer 读权限（S-1-15-2-1 / S-1-15-2-2），使 UWP 可加载
 // ------------------------------------------------------------------
 static HRESULT GrantAppContainerReadAccess(const wchar_t* path) {
+  // 向通用 AppContainer 和受限 AppContainer SID 授予只读执行权限。
   if (!path || !*path)
     return E_INVALIDARG;
 
@@ -118,6 +120,7 @@ static HRESULT GrantAppContainerReadAccess(const wchar_t* path) {
 // DllRegisterServer
 // ------------------------------------------------------------------
 STDAPI DllRegisterServer() {
+  // 注册 COM 服务、TSF 配置档、分类特性和资源目录权限。
   HRESULT hr = S_OK;
 
   wchar_t dllPath[MAX_PATH] = {0};
@@ -192,6 +195,7 @@ STDAPI DllRegisterServer() {
 // DllUnregisterServer
 // ------------------------------------------------------------------
 STDAPI DllUnregisterServer() {
+  // 注销 TSF 配置档、类别和 CLSID 注册表项。
   HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   bool bNeedCoUninit = SUCCEEDED(hrCo);
 

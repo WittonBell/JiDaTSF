@@ -1,4 +1,5 @@
 #pragma once
+// TSF 文本服务实现及其组合、候选窗口和状态栏管理接口。
 #include <msctf.h>
 #include "CandidateWindow.h"
 #include "Config.h"

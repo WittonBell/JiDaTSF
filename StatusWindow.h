@@ -1,4 +1,5 @@
 #pragma once
+// 独立的输入状态悬浮条及中英文、全半角等切换命令。
 
 #include <windows.h>
 #include <functional>
@@ -14,10 +15,10 @@ enum class StatusCommand {
 };
 
 struct InputStatus {
-  bool chinese = true;
-  bool fullShape = false;
-  bool chinesePunctuation = true;
-  bool traditional = false;
+  bool chinese = true;            // 中文模式是否开启。
+  bool fullShape = false;         // 是否使用全角字符。
+  bool chinesePunctuation = true; // 是否使用中文标点。
+  bool traditional = false;       // 是否输出繁体字。
 };
 
 // A standalone, non-activating TSF input-method status window.

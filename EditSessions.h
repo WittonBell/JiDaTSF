@@ -1,4 +1,5 @@
 #pragma once
+// TSF 编辑会话辅助类：组合文本提交、组合创建、光标位置查询等。
 #include <msctf.h>
 #include <utility>
 #include "Globals.h"

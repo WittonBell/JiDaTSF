@@ -1,4 +1,5 @@
 #include "SettingWindow.h"
+// 设置窗口实现：配置加载、控件布局、虚拟键盘编辑和配置保存。
 #include <commctrl.h>
 #include <commdlg.h>
 #include "Config.h"
@@ -284,6 +285,7 @@ HTREEITEM FindFirstPageItem(HWND tree, HTREEITEM item) {
 }  // namespace
 
 CSettingWindow::CSettingWindow(HINSTANCE inst, HWND owner, ChangeCallback cb)
+  // 保存宿主、窗口及配置变更回调，后续在窗口线程中创建控件。
     : _instance(inst), _owner(owner), _onChange(std::move(cb)) {}
 
 CSettingWindow::~CSettingWindow() {
@@ -323,6 +325,7 @@ void CSettingWindow::Show(HINSTANCE inst, HWND owner, ChangeCallback onChange) {
 }
 
 bool CSettingWindow::_Create() {
+  // 创建主窗口、左侧页面树、页面容器及默认控件布局。
   INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_TREEVIEW_CLASSES};
   if (!InitCommonControlsEx(&controls))
     return false;
@@ -452,6 +455,7 @@ HWND CSettingWindow::_MkCombo(int x, int y, int w, int h, int id) {
 }
 
 void CSettingWindow::_Layout() {
+  // 根据窗口和 DPI 尺寸重新排列页面容器与内容控件。
   _font = CreateFontW(-_S(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                       CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
@@ -643,6 +647,7 @@ void CSettingWindow::_Layout() {
 }
 
 void CSettingWindow::_BuildVirtualKeyboard() {
+  // 构建虚拟键盘按键按钮及普通/Shift 字符编辑入口。
   static const UINT rows[][13] = {
       {VK_OEM_3, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
        VK_OEM_MINUS, VK_OEM_PLUS},
@@ -819,6 +824,7 @@ void CSettingWindow::_EditVirtualKey(UINT key, int pageId) {
 }
 
 void CSettingWindow::_LoadFromConfig() {
+  // 将全局配置复制到草稿并同步到各设置控件。
   _draft = g_config;
   SetCheck(_controls.chkZWildcard, _draft.zWildcard);
   SetCheck(_controls.chkZRepeat, _draft.zRepeat);
@@ -850,6 +856,7 @@ void CSettingWindow::_LoadFromConfig() {
 }
 
 void CSettingWindow::_SaveToConfig() {
+  // 从控件读取草稿、校验数值并保存到全局配置和 INI。
   _draft.zWildcard = IsChecked(_controls.chkZWildcard);
   _draft.zRepeat = IsChecked(_controls.chkZRepeat);
   _draft.semicolonSecond = IsChecked(_controls.chkSemiSecond);
@@ -888,6 +895,7 @@ void CSettingWindow::_SaveToConfig() {
 }
 
 void CSettingWindow::_ResetToDefault() {
+  // 将草稿恢复为默认配置并刷新界面控件。
   _draft = JiDaConfig();
   SetCheck(_controls.chkZWildcard, _draft.zWildcard);
   SetCheck(_controls.chkZRepeat, _draft.zRepeat);
@@ -919,6 +927,7 @@ void CSettingWindow::_ResetToDefault() {
 }
 
 void CSettingWindow::_SelectPage(int pageId) {
+  // 切换左侧选择项对应的设置页面。
   _activePageId = pageId;
   for (const Page& page : _pages)
     ShowWindow(page.window, page.id == pageId ? SW_SHOW : SW_HIDE);

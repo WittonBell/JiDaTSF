@@ -1,12 +1,14 @@
 #pragma once
+// 五笔输入引擎：维护编码、候选、翻页、提交和造词状态。
 #include "Globals.h"
 #include "StatusWindow.h"
 
 struct CandidateItem {
-  std::wstring text;
-  std::wstring code;
+  std::wstring text; // 候选文字。
+  std::wstring code; // 候选对应编码。
 };
 
+// 输入引擎需要通知宿主执行的操作类型。
 enum class EngineAction {
   None,
   UpdateCandidates,

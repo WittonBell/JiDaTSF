@@ -1,4 +1,5 @@
 #include "Globals.h"
+// 全局状态实现：码表加载、缓存读取、Trie 构建和用户词持久化。
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -66,6 +67,7 @@ const size_t g_virtualKeyboardKeyCount =
     sizeof(g_virtualKeyboardKeys) / sizeof(g_virtualKeyboardKeys[0]);
 
 bool GetSoftKeyboardCharacter(UINT key, bool shifted, wchar_t& character) {
+  // 从虚拟键盘配置中读取普通或 Shift 状态字符。
   auto found = g_config.softKeyboard.find(key);
   if (found == g_config.softKeyboard.end())
     return false;
@@ -80,6 +82,7 @@ bool GetSoftKeyboardCharacter(UINT key, bool shifted, wchar_t& character) {
 std::wstring GetPunctuationCharacter(UINT key,
                                      bool shifted,
                                      wchar_t fallback) {
+  // 优先使用按键自定义标点；未配置时回退到系统默认标点映射。
   auto configured = g_config.customPunctuation.find(key);
   if (configured != g_config.customPunctuation.end()) {
     const std::wstring& value =
@@ -101,12 +104,14 @@ static std::atomic<bool> s_tableLoading{false};
 static constexpr uint32_t kDictionaryCacheVersion = 2;
 
 static bool ReadCacheValue(FILE* fp, void* value, size_t size) {
+  // 从缓存文件中读取指定字节数，并以读取成功作为有效性判断。
   return fread(value, 1, size, fp) == size;
 }
 
 static bool GetFileMetadata(const std::wstring& path,
                             uint64_t& size,
                             uint64_t& lastWrite) {
+  // 获取源码词库的文件大小和最后写入时间，用于校验缓存是否过期。
   WIN32_FILE_ATTRIBUTE_DATA data;
   if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data))
     return false;
@@ -120,6 +125,7 @@ static bool GetFileMetadata(const std::wstring& path,
 static void BuildTrie();
 
 static void BuildCharacterFullCode() {
+  // 为每个单字记录最短且字典序最小的全码，供造词逻辑查询。
   g_charFullCode.clear();
   for (auto& e : g_entries) {
     if (e.word.size() != 1)
@@ -132,6 +138,7 @@ static void BuildCharacterFullCode() {
 }
 
 static bool LoadJiDaTableCacheFile(const std::wstring& path) {
+  // 校验缓存魔数、版本、源码尺寸与修改时间后加载二进制词库。
   uint64_t sourceSize = 0, sourceLastWrite = 0;
   if (!GetFileMetadata(path, sourceSize, sourceLastWrite))
     return false;
@@ -204,16 +211,20 @@ static bool LoadJiDaTableCacheFile(const std::wstring& path) {
 }
 
 void SetJiDaTablePath(const std::wstring& path) {
+  // 保存码表源文件路径，供同步和异步加载流程复用。
   s_tablePath = path;
 }
 bool IsJiDaTableLoaded() {
+  // 查询码表是否已加载完成，线程读取使用原子状态。
   return s_tableLoaded.load();
 }
 bool IsJiDaTableLoading() {
+  // 查询码表是否正在由后台线程加载。
   return s_tableLoading.load();
 }
 
 bool LoadJiDaTableCache() {
+  // 在主线程中尝试加载二进制缓存；加载中或已加载时直接返回。
   if (s_tableLoaded.load())
     return true;
   bool expected = false;
@@ -230,6 +241,7 @@ bool LoadJiDaTableCache() {
 }
 
 void LoadJiDaTableAsync() {
+  // 后台加载码表，避免阻塞 TSF 激活和宿主界面。
   if (s_tableLoaded.load())
     return;
   bool expected = false;
@@ -252,6 +264,7 @@ void LoadJiDaTableAsync() {
 
 // ---------- 解析 ----------
 static void StripEntryPrefix(std::wstring& s) {
+  // 去除词条开头的特殊排序前缀字符。
   while (!s.empty()) {
     wchar_t c = s[0];
     if (c == L'~' || c == L'^' || c == L'!')
@@ -261,6 +274,7 @@ static void StripEntryPrefix(std::wstring& s) {
   }
 }
 static void SplitTokens(const std::wstring& s, std::vector<std::wstring>& out) {
+  // 按空格或制表符拆分一行文本中的编码和词条。
   out.clear();
   std::wstring cur;
   for (wchar_t c : s) {
@@ -277,6 +291,7 @@ static void SplitTokens(const std::wstring& s, std::vector<std::wstring>& out) {
 }
 
 static void ParseJiDaFormat(FILE* fp, std::vector<WubiEntry>& entries) {
+  // 解析极达词库的区段、通配符和制表符/空格分隔词条。
   wchar_t line[8192];
   bool inText = false, inDesc = false;
   while (fgetws(line, 8192, fp)) {
@@ -357,6 +372,7 @@ static void ParseJiDaFormat(FILE* fp, std::vector<WubiEntry>& entries) {
 }
 
 static void ParseSimpleFormat(FILE* fp, std::vector<WubiEntry>& entries) {
+  // 解析“编码<TAB>词条”格式的简易词库文本。
   wchar_t line[4096];
   while (fgetws(line, 4096, fp)) {
     std::wstring s = line;
@@ -382,32 +398,57 @@ static void ParseSimpleFormat(FILE* fp, std::vector<WubiEntry>& entries) {
 }
 
 static void BuildTrie() {
+  // 根据 g_entries 中的编码构建字典 Trie（前缀树）。
+  //
+  // 构建规则：
+  //   1. Trie 的根节点下标固定为 g_trieRoot，本实现中始终为 0。
+  //   2. 编码中的每个英文字母 a-z 对应 children 数组中的一个分支。
+  //   3. 从根节点开始逐字符遍历；分支不存在时先创建新节点，再继续向下。
+  //   4. 编码遍历结束后，将词条在 g_entries 中的下标保存到末端节点的
+  //      ownEntries 中。这样既能快速定位精确编码，也能通过遍历子树查询前缀。
+  //   5. 遇到非 a-z 字符的非法编码时跳过该词条，防止越界访问。
+  //
+  // 重建前清空旧 Trie。reserve 为根节点和预计节点预留容量，能减少
+  // emplace_back 时的动态重分配次数；但实际节点数仍由词条编码决定。
   g_trie.clear();
   g_trie.reserve(g_entries.size() + 1);
+  // 添加根节点；TrieNode 构造函数会把全部 26 个 children 初始化为 -1。
   g_trie.emplace_back();
   g_trieRoot = 0;
 
+  // i 是当前词条在 g_entries 中的下标，它会同时作为 ownEntries 的值，
+  // 查询候选时可通过 g_entries[i] 取回完整编码、词语和字符集等级。
   for (int i = 0; i < (int)g_entries.size(); ++i) {
+    // 每个词条都从共享根节点重新开始，沿其编码逐级向下查找。
     int cur = g_trieRoot;
+    // ok 用于记录当前编码是否全部合法且成功写入 Trie。
     bool ok = true;
     for (wchar_t ch : g_entries[i].code) {
+      // 将小写字母映射为 children 数组下标：
+      // a 对应 0，b 对应 1，...，z 对应 25。
       int ci = ch - L'a';
       if (ci < 0 || ci >= 26) {
         ok = false;
         break;
       }
+      // 若当前节点还没有对应字母的分支，则创建一个 TrieNode，
+      // 并把新节点下标写入父节点的 children[ci]。
       if (g_trie[cur].children[ci] == -1) {
         g_trie[cur].children[ci] = (int)g_trie.size();
         g_trie.emplace_back();
       }
+      // 进入子节点，继续处理编码中的下一个字符。
       cur = g_trie[cur].children[ci];
     }
+    // 编码合法时，表示该编码正好位于当前节点；将词条下标挂到该节点，
+    // 同一编码的多个词条会依次追加到同一个 ownEntries 向量中。
     if (ok)
       g_trie[cur].ownEntries.push_back(i);
   }
 }
 
 bool LoadJiDaTable(const std::wstring& path) {
+  // 打开文本词库，识别格式并解析为词条后构建 Trie 和单字全码。
   FILE* fp = nullptr;
   if (_wfopen_s(&fp, path.c_str(), L"r, ccs=UTF-8") != 0 || !fp) {
     OutputDebugStringW(L"[JiDa] LoadJiDaTable: cannot open file\n");
@@ -441,6 +482,7 @@ bool LoadJiDaTable(const std::wstring& path) {
 
 // ---------- 用户词 ----------
 void LoadUserPhrases() {
+  // 从配置目录读取用户词表，保持编码和文本一一对应。
   g_userPhrases.clear();
   std::wstring configDir = GetJiDaConfigDir();
   if (configDir.empty())
@@ -471,6 +513,7 @@ void LoadUserPhrases() {
 }
 
 void SaveUserPhrases() {
+  // 将内存中的全部用户词按“编码<TAB>文本”格式写入文件。
   std::wstring configDir = GetJiDaConfigDir();
   if (configDir.empty())
     return;
@@ -490,6 +533,7 @@ void SaveUserPhrases() {
 }
 
 bool AddUserPhrase(const std::wstring& code, const std::wstring& text) {
+  // 校验编码长度并去除重复项，然后追加到内存用户词表。
   if (code.empty() || text.empty())
     return false;
   if (code.size() > 4)

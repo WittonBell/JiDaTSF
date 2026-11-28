@@ -1,4 +1,5 @@
 #include "PhraseWindow.h"
+// 造词窗口实现：根据最近提交内容生成五笔词组并提供键盘交互。
 #include <shellscalingapi.h>
 #include <windowsx.h>
 #include <algorithm>
@@ -9,6 +10,7 @@
 static const wchar_t* kPhraseClass = L"JiDa.PhraseWindow";
 
 bool CPhraseWindow::Create(HINSTANCE inst) {
+  // 创建无激活、置顶的造词悬浮窗口。
   WNDCLASSEX wc = {sizeof(wc)};
   wc.lpfnWndProc = _WndProc;
   wc.hInstance = inst;
@@ -76,6 +78,7 @@ void CPhraseWindow::_RebuildFont() {
 void CPhraseWindow::Show(const std::vector<PhraseEntry>& entries,
                          POINT anchor,
                          ConfirmHandler onConfirm) {
+  // 至少需要两个汉字才能按照五笔规则生成词组。
   if (entries.size() < 2)
     return;
 
@@ -180,6 +183,7 @@ std::wstring CPhraseWindow::_ComputeCode() const {
 }
 
 std::wstring CPhraseWindow::_BuildCode(const std::vector<PhraseEntry>& sel) {
+  // 按 2 字、3 字、4 字及多字词的五笔取码规则拼接编码。
   if (sel.empty())
     return L"";
   auto getFull = [](const PhraseEntry& e) -> const std::wstring& {
@@ -226,6 +230,7 @@ void CPhraseWindow::_Commit() {
 }
 
 bool CPhraseWindow::HandleKey(WPARAM vk) {
+  // 左右键调整造词字数，Enter 确认，Esc 取消。
   if (!IsVisible())
     return false;
 

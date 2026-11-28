@@ -1,4 +1,5 @@
 #pragma once
+// 全局配置、码表、Trie 索引、用户词和虚拟键盘共享定义。
 #include <msctf.h>
 #include <windows.h>
 #include <atomic>
@@ -13,7 +14,9 @@ extern HINSTANCE g_hInstance;
 extern const CLSID CLSID_JiDaTSF;
 extern const GUID GUID_JiDa_LBI;
 
+// 候选框排列方式：纵向或横向。
 enum class CandLayout { Vertical, Horizontal };
+// 五笔词条允许使用的字符集等级，数值越大覆盖范围越广。
 enum class CharacterSetVersion : int {
   GB2312 = 0,
   GBK = 1,
@@ -21,6 +24,7 @@ enum class CharacterSetVersion : int {
   GB18030_2005 = 3
 };
 
+// 中英文切换快捷键类型。
 enum class ChineseToggleShortcut : int {
   Disabled = 0,
   LeftShift,
@@ -32,8 +36,8 @@ enum class ChineseToggleShortcut : int {
 };
 
 struct KeyCharacterPair {
-  std::wstring normal;
-  std::wstring shifted;
+  std::wstring normal;   // 未按 Shift 时输出的字符。
+  std::wstring shifted;  // 按下 Shift 时输出的字符。
 };
 
 struct VirtualKeyDefinition {
@@ -44,15 +48,15 @@ struct VirtualKeyDefinition {
 };
 
 struct WubiEntry {
-  std::wstring code;
-  std::wstring word;
-  int level;
+  std::wstring code;       // 五笔编码。
+  std::wstring word;       // 对应词或汉字。
+  int level;               // 词条排序权重。
   CharacterSetVersion requiredCharacterSet = CharacterSetVersion::GB2312;
 };
 
 struct TrieNode {
-  int children[26];
-  std::vector<int> ownEntries;
+  int children[26];          // a-z 分支节点下标。
+  std::vector<int> ownEntries; // 当前编码节点直接拥有的词条下标。
   TrieNode() { memset(children, -1, sizeof(children)); }
 };
 

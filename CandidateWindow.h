@@ -1,4 +1,5 @@
 #pragma once
+// 候选词悬浮窗口及其鼠标、DPI 和绘制接口。
 #include <windows.h>
 #include <functional>
 #include <string>
@@ -8,7 +9,8 @@
 
 class CCandidateWindow {
  public:
-  std::function<void(int)> OnPick;  // 回调：被点/悬停的候选绝对索引
+  std::function<void(int)> OnPick;  // 回调：被点击候选的绝对索引。
+  // 码表异步加载完成后通知窗口刷新可用状态。
   std::function<void()> OnTableLoaded;
 
   bool Create(HINSTANCE hInst);

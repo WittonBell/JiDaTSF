@@ -1,7 +1,9 @@
 #include "Globals.h"
+// COM 类工厂与 DLL 卸载入口实现。
 #include "JidaTextService.h"
 
 class CClassFactory : public IClassFactory {
+  // COM 类工厂负责为 TSF 框架创建文本服务实例。
   LONG _ref = 1;
 
  public:
@@ -34,6 +36,7 @@ class CClassFactory : public IClassFactory {
   STDMETHODIMP LockServer(BOOL) override { return S_OK; }
 };
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
+  // 仅为本输入法 CLSID 提供 IClassFactory。
   if (rclsid != CLSID_JiDaTSF)
     return CLASS_E_CLASSNOTAVAILABLE;
   auto* cf = new CClassFactory();

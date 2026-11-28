@@ -1,4 +1,5 @@
 #include "JiDaEngine.h"
+// 输入引擎实现：包含 Trie 查询、候选选择、分号日期金额和造词逻辑。
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -7,6 +8,7 @@
 #include "PhraseWindow.h"
 
 void JiDaEngine::Reset() {
+  // 清空当前编码状态，但保留最近提交记录供 Z 重码和造词使用。
   buffer_.clear();
   candidates_.clear();
   semicolonTail_.clear();
@@ -54,15 +56,31 @@ static int TrieWalk(const std::wstring& code) {
 }
 
 void JiDaEngine::Query(const std::wstring& code) {
+  // 根据当前输入编码重新生成候选列表，并重置候选页与高亮状态。
+  //
+  // 查询流程及优先级：
+  //   1. 清空旧候选，恢复到第一页并取消原来的高亮选择。
+  //   2. 若编码为空或全局词库尚未加载，则不产生候选并直接返回。
+  //   3. 把编码完全相同的用户词放到候选列表最前面。
+  //   4. 沿 Trie 查询精确编码及其所有后续前缀候选。
+  //   5. 若启用了 Z 通配，则依次展开通配字符并补充候选。
+  //   6. 使用 seen 按词文本去重，最多保留 kMaxCandidates 个候选。
+  //
+  // candidates_.clear 不会清除当前缓冲区或提交历史，只表示需要根据新的
+  // code 重新计算候选；pageStart_ 和 selected_ 必须同步归零，避免新结果沿用
+  // 旧候选页或越界的高亮索引。
   candidates_.clear();
   pageStart_ = 0;
   selected_ = 0;
+  // 无输入编码时没有可查询结果，提前返回可以避免访问空 Trie。
   if (code.empty())
     return;
 
+  // 词库可能由后台线程异步加载；未加载完成时候选列表保持为空。
   if (!IsJiDaTableLoaded())
     return;
 
+  // 每个进程只记录一次词库规模日志，避免候选查询频繁触发大量调试输出。
   static std::atomic<bool> loggedOnce{false};
   bool expected = false;
   if (loggedOnce.compare_exchange_strong(expected, true)) {
@@ -72,29 +90,49 @@ void JiDaEngine::Query(const std::wstring& code) {
     OutputDebugStringW(dbg);
   }
 
+  // 限制候选数量可以避免单个短编码展开出过多词条，占用界面和更新成本。
   static constexpr int kMaxCandidates = 50;
+  // 已显示词文本集合按词去重，而不是按编码去重：同一个词可能存在于多个编码，
+  // 此时只保留一份候选，防止用户词、精确匹配和通配匹配重复出现。
   std::unordered_set<std::wstring_view> seen;
 
-  // 0. 用户词优先
+  // 阶段 0：查询用户词。
+  // 用户词只匹配完整编码（up.code == code），不会参与前缀或 Z 通配扩展；
+  // 命中的用户词会最先进入候选列表，优先级高于词库候选。
   for (auto& up : g_userPhrases) {
     if (up.code == code) {
+      // seen 确保用户词和后续词库候选文本相同时不会重复显示。
       if (seen.insert(std::wstring_view(up.text)).second)
         candidates_.push_back({up.text, up.code});
     }
   }
 
+  // Lambda：递归遍历从 node 开始的 Trie 子树。
+  // node 表示一个完整编码的前缀节点；ownEntries 保存该节点直接对应的词条，
+  // children 列表保存继续追加字母后形成的子节点。
+  //
+  // 遍历顺序为：先输出当前节点 ownEntries，再按 children 的 a-z 顺序递归。
+  // 这一顺序与词库原有合并索引的候选顺序尽量保持一致。
+  // 返回 true 表示候选已达到上限，调用方应停止继续查询。
   auto appendSubtree = [&](auto&& self, int node) -> bool {
+    // 先输出以当前节点编码结尾的精确词条。
     for (int idx : g_trie[node].ownEntries) {
       auto& entry = g_entries[idx];
+      // 用户配置的字符集等级低于词条要求时，此词条不允许显示。
+      // 例如配置为 GB2312 时，GBK 或更高字符集的词条会被过滤。
       if (static_cast<int>(g_config.characterSetVersion) <
           static_cast<int>(entry.requiredCharacterSet))
         continue;
+      // 文本首次出现时才加入候选；即使候选满了，也只在确实新增候选时计数。
       if (seen.insert(std::wstring_view(entry.word)).second) {
         candidates_.push_back({entry.word, entry.code});
+        // 达到最大候选数后立即返回 true，由所有递归层逐级停止。
         if ((int)candidates_.size() >= kMaxCandidates)
           return true;
       }
     }
+    // 当前节点没有再增加候选时，继续遍历所有 26 个字母分支，
+    // 从而把以当前编码为前缀的长编码词条也纳入候选。
     for (int child : g_trie[node].children) {
       if (child >= 0 && self(self, child))
         return true;
@@ -102,25 +140,38 @@ void JiDaEngine::Query(const std::wstring& code) {
     return false;
   };
 
-  // 1. 精确匹配 + 前缀匹配；遍历顺序与旧的合并索引一致。
+  // 阶段 1：普通 Trie 精确匹配与前缀匹配。
+  // TrieWalk 从根节点逐字符进入，与 code 对应的节点就是其编码前缀。
+  // 例如 code 为 "a"，会遍历节点自身及所有以 "a" 开头的后续编码。
   int cur = TrieWalk(code);
   if (cur >= 0)
     appendSubtree(appendSubtree, cur);
 
-  // 2. Z 通配：将 wildcardChar 替换为 a-y 逐一展开
+  // 阶段 2：Z 通配匹配。
+  // g_config.zWildcard 启用时，用户编码中按 wildcardChar 配置出现的位置
+  // 会被视为任意字母占位符；只在普通查询候选不足或仍有剩余容量时继续。
   if (g_config.zWildcard) {
     wchar_t wc = g_config.wildcardChar;
     size_t zpos = code.find(wc);
+    // 编码中只有至少一个通配字符时才展开。
     if (zpos != std::wstring::npos) {
+      // 枚举 a 到 y 共 25 个实际字母，但不枚举通配字符本身。
+      // 若配置的通配字符是 z，则共尝试 a-y；若配置为别的字符，
+      // 该循环仍然是把一个通配位置替换为除通配字符外的字母。
       for (wchar_t c = L'a'; c <= L'y'; ++c) {
         if (c == wc)
           continue;
+        // 每次复制原编码，仅替换第一个匹配到的通配位置。
+        // 目前实现只展开 code 中从左到右找到的第一个通配符。
         std::wstring expanded = code;
         expanded[zpos] = c;
         int cur2 = TrieWalk(expanded);
+        // 展开的编码在 Trie 中不存在时跳过，不产生候选。
         if (cur2 < 0)
           continue;
+        // 遍历展开编码对应节点的完整子树，并继续执行字符集过滤及去重。
         appendSubtree(appendSubtree, cur2);
+        // 普通查询或前面通配展开已经达到上限时，不再尝试更多字母。
         if ((int)candidates_.size() >= kMaxCandidates)
           break;
       }
@@ -131,6 +182,7 @@ void JiDaEngine::Query(const std::wstring& code) {
 EngineAction JiDaEngine::OnLetter(wchar_t ch,
                                   std::wstring& committed,
                                   std::wstring& newBuffer) {
+  // 转换并校验英文字母，处理 Z 重码、四码上屏及唯一候选自动提交。
   ch = towlower(ch);
   if (ch < L'a' || ch > L'z')
     return EngineAction::None;
@@ -184,6 +236,7 @@ bool JiDaEngine::IsFourCodeComplete() const {
 }
 
 bool JiDaEngine::OnDigit(int digit, std::wstring& committed) {
+  // 数字键对应当前页内候选的绝对索引。
   if (digit < 1 || digit > 9)
     return false;
   int idx = pageStart_ + digit - 1;
@@ -197,6 +250,7 @@ bool JiDaEngine::OnDigit(int digit, std::wstring& committed) {
 }
 
 bool JiDaEngine::OnSpace(std::wstring& committed) {
+  // 空格提交高亮候选；若选中状态异常则回退到首项。
   if (candidates_.empty())
     return false;
   int idx = selected_;
@@ -209,6 +263,7 @@ bool JiDaEngine::OnSpace(std::wstring& committed) {
 }
 
 void JiDaEngine::MoveSelection(int delta) {
+  // 上下移动候选高亮，并在越过页边界时切换候选页。
   if (candidates_.empty())
     return;
   int pageEnd = (std::min)(pageStart_ + CandPageSize(), (int)candidates_.size());
@@ -271,6 +326,7 @@ bool JiDaEngine::OnSemicolon(std::wstring& committed,
 }
 
 EngineAction JiDaEngine::OnSemicolonTail(wchar_t ch, std::wstring& committed) {
+  // 分号后继续收集日期或金额输入，遇到结束键后提交附加文本。
   if (!waitDateOrAmount_)
     return EngineAction::None;
   if (ch == L';') {

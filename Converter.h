@@ -1,4 +1,5 @@
 #pragma once
+// 文本简繁转换与半角转全角接口。
 #include <string>
 
 // toTraditional：简体 → 繁体

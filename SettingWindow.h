@@ -1,4 +1,5 @@
 #pragma once
+// 输入法设置窗口及虚拟键盘配置的界面接口。
 #include <windows.h>
 #include <functional>
 #include <vector>

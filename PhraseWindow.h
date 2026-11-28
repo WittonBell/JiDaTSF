@@ -1,4 +1,5 @@
 #pragma once
+// 造词悬浮窗口：选择最近提交的汉字并生成五笔词组编码。
 #include <windows.h>
 #include <functional>
 #include <string>
@@ -7,7 +8,7 @@
 struct PhraseEntry {
   std::wstring code;      // 用户输入的简码
   std::wstring fullCode;  // 五笔全码
-  std::wstring text;
+  std::wstring text;      // 候选汉字或词组文本
 };
 
 class CPhraseWindow {

@@ -1,4 +1,5 @@
 #include "CandidateWindow.h"
+// 候选窗口实现：负责候选绘制、候选布局、鼠标命中及 DPI 缩放。
 #include <windowsx.h>
 #include <algorithm>
 #include "DpiHelper.h"
@@ -12,6 +13,7 @@ static bool IsVertical() {
 }
 
 bool CCandidateWindow::Create(HINSTANCE h) {
+  // 注册窗口类并以 NOACTIVATE 风格创建悬浮候选框。
   WNDCLASSEX wc = {sizeof(wc)};
   wc.lpfnWndProc = _WndProc;
   wc.hInstance = h;
@@ -60,6 +62,7 @@ void CCandidateWindow::Hide() {
 }
 
 void CCandidateWindow::_RebuildFont() {
+  // 候选和提示文字字体会随配置与 DPI 一起重建。
   if (_font)
     DeleteObject(_font);
   if (_hintFont)
@@ -199,6 +202,7 @@ void CCandidateWindow::ShowText(const std::wstring& text,
 }
 
 void CCandidateWindow::_UpdateSize() {
+  // 根据候选文字宽度、页大小和当前布局计算窗口尺寸。
   if (!_hwnd)
     return;
 
@@ -358,6 +362,7 @@ LRESULT CALLBACK CCandidateWindow::_WndProc(HWND h,
 }
 
 LRESULT CCandidateWindow::_OnPaint() {
+  // 绘制候选页、当前选择项及文本提示模式。
   PAINTSTRUCT ps;
   HDC hdc = BeginPaint(_hwnd, &ps);
   RECT rc;
@@ -497,6 +502,7 @@ LRESULT CCandidateWindow::_OnPaint() {
 }
 
 int CCandidateWindow::_HitTest(int mx, int my) const {
+  // 将鼠标坐标转换为候选列表中的绝对索引。
   if (_textMode)
     return -1;
 
@@ -524,6 +530,7 @@ int CCandidateWindow::_HitTest(int mx, int my) const {
 }
 
 LRESULT CCandidateWindow::_OnLButtonUp(LPARAM l) {
+  // 左键命中候选后通知输入引擎提交对应项。
   if (_textMode)
     return 0;
 
@@ -550,6 +557,7 @@ LRESULT CCandidateWindow::_OnMouseMove(LPARAM l) {
 }
 
 LRESULT CCandidateWindow::_OnMouseWheel(WPARAM w) {
+  // 鼠标滚轮切换候选页并刷新悬浮窗口。
   if (GET_WHEEL_DELTA_WPARAM(w) > 0) {
     if (_pageStart >= CandPageSize())
       _pageStart -= CandPageSize();
